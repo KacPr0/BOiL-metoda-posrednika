@@ -137,6 +137,8 @@ class AplikacjaTransportowa:
         self.pola_blokad = []
         self.pola_podazy = []
         self.pola_popytu = []
+        self.nazwy_dostawcow = []
+        self.nazwy_odbiorcow = []
 
         self.ramka_danych = None
         self.ramka_wynikow = None
@@ -162,6 +164,7 @@ class AplikacjaTransportowa:
 
         ttk.Button(gora, text="Utworz tabele", command=self.utworz_tabele).pack(side="left", padx=10)
         ttk.Button(gora, text="Przyklad", command=self.wczytaj_przyklad).pack(side="left", padx=5)
+        ttk.Button(gora, text="Zbilansuj", command=self.zbilansuj_tabele).pack(side="left", padx=5)
         ttk.Button(gora, text="Oblicz", command=self.oblicz).pack(side="left", padx=5)
 
         ttk.Label(
@@ -212,7 +215,7 @@ class AplikacjaTransportowa:
             przesuniecie = max(3, abs(event.delta) // 40)
             self.canvas_wynikow.yview_scroll(kierunek * przesuniecie, "units")
 
-    def utworz_tabele(self):
+    def utworz_tabele(self, resetuj_nazwy=True):
         for widget in self.ramka_danych.winfo_children():
             widget.destroy()
 
@@ -230,9 +233,14 @@ class AplikacjaTransportowa:
         self.pola_podazy = [tk.StringVar(value="0") for _ in range(wiersze)]
         self.pola_popytu = [tk.StringVar(value="0") for _ in range(kolumny)]
 
+        if resetuj_nazwy or len(self.nazwy_dostawcow) != wiersze:
+            self.nazwy_dostawcow = [f"D{i + 1}" for i in range(wiersze)]
+        if resetuj_nazwy or len(self.nazwy_odbiorcow) != kolumny:
+            self.nazwy_odbiorcow = [f"O{j + 1}" for j in range(kolumny)]
+
         ttk.Label(self.ramka_danych, text="").grid(row=0, column=0, padx=4, pady=4)
         for j in range(kolumny):
-            ttk.Label(self.ramka_danych, text=f"O{j + 1}").grid(
+            ttk.Label(self.ramka_danych, text=self.nazwy_odbiorcow[j]).grid(
                 row=0, column=j + 1, padx=4, pady=4
             )
         ttk.Label(self.ramka_danych, text="Podaz").grid(
@@ -240,7 +248,7 @@ class AplikacjaTransportowa:
         )
 
         for i in range(wiersze):
-            ttk.Label(self.ramka_danych, text=f"D{i + 1}").grid(
+            ttk.Label(self.ramka_danych, text=self.nazwy_dostawcow[i]).grid(
                 row=i + 1, column=0, padx=4, pady=4
             )
             for j in range(kolumny):
@@ -282,21 +290,19 @@ class AplikacjaTransportowa:
         self.wyczysc_wyniki()
 
     def wczytaj_przyklad(self):
-        self.liczba_dostawcow.set(3)
-        self.liczba_odbiorcow.set(4)
+        self.liczba_dostawcow.set(2)
+        self.liczba_odbiorcow.set(3)
         self.utworz_tabele()
 
         przyklad_zyskow = [
-            [8, 6, 10, 9],
-            [9, 12, 13, 7],
-            [14, 9, 16, 5],
+            [8, 14, 17],
+            [12, 9, 19],
         ]
-        przyklad_podazy = [20, 30, 25]
-        przyklad_popytu = [10, 25, 20, 20]
+        przyklad_podazy = [20, 30]
+        przyklad_popytu = [10, 28, 29]
         przyklad_blokad = [
-            [False, True, False, False],
-            [False, False, False, False],
-            [False, False, False, True],
+            [False, False, False],
+            [False, False, False],
         ]
 
         for i, podaz in enumerate(przyklad_podazy):
@@ -307,6 +313,59 @@ class AplikacjaTransportowa:
 
         for j, popyt in enumerate(przyklad_popytu):
             self.pola_popytu[j].set(str(popyt))
+
+    def wpisz_dane_do_tabeli(self, zyski, podaz, popyt, blokady):
+        for i in range(len(podaz)):
+            self.pola_podazy[i].set(str(podaz[i]))
+            for j in range(len(popyt)):
+                self.pola_zyskow[i][j].set(str(zyski[i][j]))
+                self.pola_blokad[i][j].set(blokady[i][j])
+
+        for j in range(len(popyt)):
+            self.pola_popytu[j].set(str(popyt[j]))
+
+    def zbilansuj_tabele(self):
+        try:
+            zyski, podaz, popyt, blokady, dostawcy, odbiorcy = self.pobierz_dane()
+        except ValueError as blad:
+            messagebox.showerror("Blad", str(blad))
+            return
+
+        suma_podazy = sum(podaz)
+        suma_popytu = sum(popyt)
+
+        if suma_podazy == suma_popytu:
+            messagebox.showinfo("Bilans", "Problem jest juz zbilansowany.")
+            return
+
+        if suma_podazy > suma_popytu:
+            if len(popyt) >= MAX_SIZE:
+                messagebox.showerror("Blad", "Nie mozna dodac fikcyjnego odbiorcy, bo jest juz 10 odbiorcow.")
+                return
+            roznica = suma_podazy - suma_popytu
+            for wiersz in zyski:
+                wiersz.append(0.0)
+            for wiersz in blokady:
+                wiersz.append(False)
+            popyt.append(roznica)
+            odbiorcy.append("OF")
+        else:
+            if len(podaz) >= MAX_SIZE:
+                messagebox.showerror("Blad", "Nie mozna dodac fikcyjnego dostawcy, bo jest juz 10 dostawcow.")
+                return
+            roznica = suma_popytu - suma_podazy
+            zyski.append([0.0] * len(popyt))
+            blokady.append([False] * len(popyt))
+            podaz.append(roznica)
+            dostawcy.append("DF")
+
+        self.nazwy_dostawcow = dostawcy
+        self.nazwy_odbiorcow = odbiorcy
+        self.liczba_dostawcow.set(len(dostawcy))
+        self.liczba_odbiorcow.set(len(odbiorcy))
+        self.utworz_tabele(resetuj_nazwy=False)
+        self.wpisz_dane_do_tabeli(zyski, podaz, popyt, blokady)
+        self.opis_wyniku.set("Tabela zostala zbilansowana. Mozesz teraz ustawic blokady i kliknac Oblicz.")
 
     def pobierz_liczbe(self, tekst, nazwa):
         tekst = tekst.strip().replace(",", ".")
@@ -343,8 +402,8 @@ class AplikacjaTransportowa:
             self.pobierz_liczbe(self.pola_popytu[j].get(), f"popyt O{j + 1}")
             for j in range(kolumny)
         ]
-        dostawcy = [f"D{i + 1}" for i in range(wiersze)]
-        odbiorcy = [f"O{j + 1}" for j in range(kolumny)]
+        dostawcy = self.nazwy_dostawcow[:]
+        odbiorcy = self.nazwy_odbiorcow[:]
 
         return zyski, podaz, popyt, blokady, dostawcy, odbiorcy
 

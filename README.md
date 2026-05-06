@@ -6,6 +6,7 @@
 - liczenie metoda maksymalnego elementu macierzy,
 - blokowanie wybranych tras,
 - bilansowanie przez fikcyjnego dostawce albo odbiorce,
+- pokazanie fikcyjnego dostawcy/odbiorcy w tabeli po kliknieciu `Zbilansuj`,
 - pokazanie wynikow posrednich dla kazdej iteracji,
 - pokazanie tabeli koncowej.
 
@@ -18,7 +19,7 @@
 ## Logika algorytmu
 
 1. Program odczytuje macierz, podaz, popyt i blokady.
-2. Jezeli problem nie jest zbilansowany, dodaje fikcyjny wiersz albo kolumne.
+2. Przycisk `Zbilansuj` dodaje fikcyjny wiersz albo kolumne przed obliczaniem.
 3. Szuka najwiekszej dostepnej wartosci w macierzy.
 4. Przydziela tyle, ile sie da: `min(podaz, popyt)`.
 5. Zapisuje stan tabeli po iteracji.
