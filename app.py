@@ -10,36 +10,54 @@ def copy_matrix(matrix):
     return [row[:] for row in matrix]
 
 
+def format_number(value):
+    if abs(value) < EPS:
+        value = 0.0
+    if abs(value - round(value)) < EPS:
+        return str(int(round(value)))
+    return f"{value:.2f}"
+
+
+def parse_number(text, field_name):
+    text = text.strip().replace(",", ".")
+    if not text:
+        raise ValueError(f"Pole '{field_name}' jest puste.")
+    try:
+        value = float(text)
+    except ValueError as error:
+        raise ValueError(f"Pole '{field_name}' musi byc liczba.") from error
+    if value < 0:
+        raise ValueError(f"Pole '{field_name}' nie moze byc ujemne.")
+    return value
+
+
 def calculate_unit_profits(transport_costs, purchase_costs, sale_prices, suppliers, receivers):
     profits = []
     for i, supplier in enumerate(suppliers):
         row = []
         for j, receiver in enumerate(receivers):
-            if supplier == "FD" or receiver == "FO":
-                row.append(0.0)
-            else:
-                row.append(sale_prices[j] - purchase_costs[i] - transport_costs[i][j])
+            value = 0.0
+            if supplier != "FD" and receiver != "FO":
+                value = sale_prices[j] - purchase_costs[i] - transport_costs[i][j]
+            row.append(value)
         profits.append(row)
     return profits
 
 
 def calculate_economic_summary(allocation, transport_costs, purchase_costs, sale_prices, suppliers, receivers):
-    revenue = 0.0
-    transport_cost = 0.0
-    purchase_cost = 0.0
-
+    revenue = transport_cost = purchase_cost = 0.0
     for i, supplier in enumerate(suppliers):
         if supplier == "FD":
             continue
-        supplier_real_amount = 0.0
+        amount_from_supplier = 0.0
         for j, receiver in enumerate(receivers):
             if receiver == "FO":
                 continue
             amount = allocation[i][j]
-            supplier_real_amount += amount
+            amount_from_supplier += amount
             revenue += amount * sale_prices[j]
             transport_cost += amount * transport_costs[i][j]
-        purchase_cost += supplier_real_amount * purchase_costs[i]
+        purchase_cost += amount_from_supplier * purchase_costs[i]
 
     return {
         "revenue": revenue,
@@ -49,207 +67,22 @@ def calculate_economic_summary(allocation, transport_costs, purchase_costs, sale
     }
 
 
-def parse_number(text, field_name, allow_negative=False):
-    text = text.strip().replace(",", ".")
-    if text == "":
-        raise ValueError(f"Pole '{field_name}' jest puste.")
-
-    try:
-        value = float(text)
-    except ValueError as error:
-        raise ValueError(f"Pole '{field_name}' musi byc liczba.") from error
-
-    if value < 0 and not allow_negative:
-        raise ValueError(f"Pole '{field_name}' nie moze byc ujemne.")
-
-    return value
-
-
-def format_number(value):
-    if abs(value) < EPS:
-        value = 0.0
-    if abs(value - round(value)) < EPS:
-        return str(int(round(value)))
-    return f"{value:.2f}"
-
-
 def route_priority(supplier, receiver):
     if supplier == "FD" and receiver == "FO":
         return 3
-    if supplier == "FD" and receiver != "FO":
+    if supplier == "FD":
         return 2
-    if supplier != "FD" and receiver == "FO":
+    if receiver == "FO":
         return 1
     return 0
-
-
-def is_number_text(value):
-    try:
-        float(value)
-    except ValueError:
-        return False
-    return True
-
-
-def calculate_delta_table(values, allocation, blocked):
-    supplier_count = len(values)
-    receiver_count = len(values[0]) if values else 0
-    basic = [
-        [allocation[i][j] > EPS for j in range(receiver_count)]
-        for i in range(supplier_count)
-    ]
-
-    supplier_potentials, receiver_potentials = calculate_dual_variables(values, allocation)
-
-    deltas = []
-    for i in range(supplier_count):
-        row = []
-        for j in range(receiver_count):
-            if basic[i][j]:
-                row.append("X")
-            elif blocked[i][j]:
-                row.append("-inf")
-            elif supplier_potentials[i] is None or receiver_potentials[j] is None:
-                row.append("-inf")
-            else:
-                row.append(format_number(values[i][j] - supplier_potentials[i] - receiver_potentials[j]))
-        deltas.append(row)
-
-    return deltas
-
-
-def calculate_dual_variables(values, allocation):
-    supplier_count = len(values)
-    receiver_count = len(values[0]) if values else 0
-    basic = [
-        [allocation[i][j] > EPS for j in range(receiver_count)]
-        for i in range(supplier_count)
-    ]
-    supplier_potentials = [None] * supplier_count
-    receiver_potentials = [None] * receiver_count
-
-    for start_supplier in range(supplier_count):
-        if supplier_potentials[start_supplier] is not None:
-            continue
-        supplier_potentials[start_supplier] = 0.0
-        changed = True
-        while changed:
-            changed = False
-            for i in range(supplier_count):
-                for j in range(receiver_count):
-                    if not basic[i][j]:
-                        continue
-                    if supplier_potentials[i] is not None and receiver_potentials[j] is None:
-                        receiver_potentials[j] = values[i][j] - supplier_potentials[i]
-                        changed = True
-                    elif supplier_potentials[i] is None and receiver_potentials[j] is not None:
-                        supplier_potentials[i] = values[i][j] - receiver_potentials[j]
-                        changed = True
-
-    return supplier_potentials, receiver_potentials
-
-
-def find_cycle(allocation, entering_row, entering_col):
-    supplier_count = len(allocation)
-    receiver_count = len(allocation[0]) if allocation else 0
-    start = ("r", entering_row)
-    target = ("c", entering_col)
-    graph = {}
-
-    for i in range(supplier_count):
-        graph.setdefault(("r", i), [])
-    for j in range(receiver_count):
-        graph.setdefault(("c", j), [])
-
-    for i in range(supplier_count):
-        for j in range(receiver_count):
-            if allocation[i][j] > EPS:
-                row_node = ("r", i)
-                col_node = ("c", j)
-                graph[row_node].append((col_node, (i, j)))
-                graph[col_node].append((row_node, (i, j)))
-
-    queue = [start]
-    parents = {start: (None, None)}
-
-    while queue and target not in parents:
-        current = queue.pop(0)
-        for next_node, cell in graph[current]:
-            if next_node in parents:
-                continue
-            parents[next_node] = (current, cell)
-            queue.append(next_node)
-
-    if target not in parents:
-        return []
-
-    path_cells = []
-    node = target
-    while parents[node][0] is not None:
-        previous, cell = parents[node]
-        path_cells.append(cell)
-        node = previous
-    path_cells.reverse()
-
-    return [(entering_row, entering_col)] + path_cells
-
-
-def improve_plan_with_deltas(values, allocation, blocked):
-    allocation = copy_matrix(allocation)
-    delta_steps = []
-
-    while True:
-        deltas = calculate_delta_table(values, allocation, blocked)
-        best = None
-        for i, row in enumerate(deltas):
-            for j, value in enumerate(row):
-                if not is_number_text(value):
-                    continue
-                numeric_value = float(value)
-                if numeric_value > EPS and (best is None or numeric_value > best[0]):
-                    best = (numeric_value, i, j)
-
-        delta_step = {
-            "deltas": deltas,
-            "entering": None if best is None else (best[1], best[2]),
-            "allocation_after": None,
-            "theta": None,
-        }
-        delta_steps.append(delta_step)
-
-        if best is None:
-            break
-
-        _, entering_row, entering_col = best
-        cycle = find_cycle(allocation, entering_row, entering_col)
-        if not cycle:
-            break
-
-        minus_cells = cycle[1::2]
-        theta = min(allocation[i][j] for i, j in minus_cells)
-        for index, (i, j) in enumerate(cycle):
-            if index % 2 == 0:
-                allocation[i][j] += theta
-            else:
-                allocation[i][j] -= theta
-                if abs(allocation[i][j]) < EPS:
-                    allocation[i][j] = 0.0
-        delta_step["allocation_after"] = copy_matrix(allocation)
-        delta_step["theta"] = theta
-
-    return allocation, delta_steps
 
 
 def balance_data(values, supply, demand, blocked, suppliers, receivers):
     values = copy_matrix(values)
     blocked = copy_matrix(blocked)
-    supply = supply[:]
-    demand = demand[:]
-    suppliers = suppliers[:]
-    receivers = receivers[:]
-
-    supply_sum = sum(supply)
-    demand_sum = sum(demand)
+    supply, demand = supply[:], demand[:]
+    suppliers, receivers = suppliers[:], receivers[:]
+    supply_sum, demand_sum = sum(supply), sum(demand)
 
     if abs(supply_sum - demand_sum) < EPS:
         return values, supply, demand, blocked, suppliers, receivers, "Problem byl juz zbilansowany."
@@ -273,49 +106,44 @@ def can_finish_plan(supply, demand, blocked):
     if abs(sum(supply) - sum(demand)) > EPS:
         return False
 
-    supplier_count = len(supply)
-    receiver_count = len(demand)
+    suppliers_count, receivers_count = len(supply), len(demand)
     start = 0
     first_supplier = 1
-    first_receiver = first_supplier + supplier_count
-    end = first_receiver + receiver_count
+    first_receiver = first_supplier + suppliers_count
+    end = first_receiver + receivers_count
     size = end + 1
-    capacity = [[0.0 for _ in range(size)] for _ in range(size)]
+    capacity = [[0.0] * size for _ in range(size)]
 
     for i, amount in enumerate(supply):
         capacity[start][first_supplier + i] = amount
-
-    for i in range(supplier_count):
-        for j in range(receiver_count):
+    for i in range(suppliers_count):
+        for j in range(receivers_count):
             if not blocked[i][j]:
                 capacity[first_supplier + i][first_receiver + j] = sum(supply)
-
     for j, amount in enumerate(demand):
         capacity[first_receiver + j][end] = amount
 
     flow = 0.0
-
     while True:
         parent = [-1] * size
         parent[start] = start
         queue = [start]
 
         while queue and parent[end] == -1:
-            current = queue.pop(0)
-            for next_node in range(size):
-                if parent[next_node] == -1 and capacity[current][next_node] > EPS:
-                    parent[next_node] = current
+            node = queue.pop(0)
+            for next_node, amount in enumerate(capacity[node]):
+                if parent[next_node] == -1 and amount > EPS:
+                    parent[next_node] = node
                     queue.append(next_node)
 
         if parent[end] == -1:
-            break
+            return abs(flow - sum(demand)) < EPS
 
         pushed = float("inf")
         node = end
         while node != start:
-            previous = parent[node]
-            pushed = min(pushed, capacity[previous][node])
-            node = previous
+            pushed = min(pushed, capacity[parent[node]][node])
+            node = parent[node]
 
         node = end
         while node != start:
@@ -323,20 +151,138 @@ def can_finish_plan(supply, demand, blocked):
             capacity[previous][node] -= pushed
             capacity[node][previous] += pushed
             node = previous
-
         flow += pushed
 
-    return abs(flow - sum(demand)) < EPS
+
+def calculate_dual_variables(values, allocation):
+    suppliers_count = len(values)
+    receivers_count = len(values[0]) if values else 0
+    basic = [[allocation[i][j] > EPS for j in range(receivers_count)] for i in range(suppliers_count)]
+    alpha = [None] * suppliers_count
+    beta = [None] * receivers_count
+
+    for start_supplier in range(suppliers_count):
+        if alpha[start_supplier] is not None:
+            continue
+        alpha[start_supplier] = 0.0
+        changed = True
+        while changed:
+            changed = False
+            for i in range(suppliers_count):
+                for j in range(receivers_count):
+                    if not basic[i][j]:
+                        continue
+                    if alpha[i] is not None and beta[j] is None:
+                        beta[j] = values[i][j] - alpha[i]
+                        changed = True
+                    elif alpha[i] is None and beta[j] is not None:
+                        alpha[i] = values[i][j] - beta[j]
+                        changed = True
+    return alpha, beta
+
+
+def calculate_delta_table(values, allocation, blocked):
+    alpha, beta = calculate_dual_variables(values, allocation)
+    deltas = []
+    for i, row in enumerate(values):
+        delta_row = []
+        for j, value in enumerate(row):
+            if allocation[i][j] > EPS:
+                delta_row.append("X")
+            elif blocked[i][j] or alpha[i] is None or beta[j] is None:
+                delta_row.append("-inf")
+            else:
+                delta_row.append(format_number(value - alpha[i] - beta[j]))
+        deltas.append(delta_row)
+    return deltas
+
+
+def find_cycle(allocation, entering_row, entering_col):
+    suppliers_count = len(allocation)
+    receivers_count = len(allocation[0]) if allocation else 0
+    graph = {("r", i): [] for i in range(suppliers_count)}
+    graph.update({("c", j): [] for j in range(receivers_count)})
+
+    for i in range(suppliers_count):
+        for j in range(receivers_count):
+            if allocation[i][j] > EPS:
+                graph[("r", i)].append((("c", j), (i, j)))
+                graph[("c", j)].append((("r", i), (i, j)))
+
+    start = ("r", entering_row)
+    target = ("c", entering_col)
+    queue = [start]
+    parents = {start: (None, None)}
+
+    while queue and target not in parents:
+        node = queue.pop(0)
+        for next_node, cell in graph[node]:
+            if next_node not in parents:
+                parents[next_node] = (node, cell)
+                queue.append(next_node)
+
+    if target not in parents:
+        return []
+
+    path = []
+    node = target
+    while parents[node][0] is not None:
+        node, cell = parents[node]
+        path.append(cell)
+    path.reverse()
+    return [(entering_row, entering_col)] + path
+
+
+def improve_plan_with_deltas(values, allocation, blocked):
+    allocation = copy_matrix(allocation)
+    steps = []
+
+    while True:
+        deltas = calculate_delta_table(values, allocation, blocked)
+        best = None
+        for i, row in enumerate(deltas):
+            for j, value in enumerate(row):
+                try:
+                    value = float(value)
+                except ValueError:
+                    continue
+                if value > EPS and (best is None or value > best[0]):
+                    best = (value, i, j)
+
+        step = {
+            "deltas": deltas,
+            "entering": None if best is None else (best[1], best[2]),
+            "allocation_after": None,
+            "theta": None,
+        }
+        steps.append(step)
+
+        if best is None:
+            break
+
+        _, row, col = best
+        cycle = find_cycle(allocation, row, col)
+        if not cycle:
+            break
+
+        theta = min(allocation[i][j] for i, j in cycle[1::2])
+        for index, (i, j) in enumerate(cycle):
+            allocation[i][j] += theta if index % 2 == 0 else -theta
+            if abs(allocation[i][j]) < EPS:
+                allocation[i][j] = 0.0
+
+        step["allocation_after"] = copy_matrix(allocation)
+        step["theta"] = theta
+
+    return allocation, steps
 
 
 def solve_max_element_method(values, supply, demand, blocked, suppliers, receivers):
     values, supply, demand, blocked, suppliers, receivers, balance_note = balance_data(
         values, supply, demand, blocked, suppliers, receivers
     )
-
-    supplier_count = len(supply)
-    receiver_count = len(demand)
-    allocation = [[0.0 for _ in range(receiver_count)] for _ in range(supplier_count)]
+    suppliers_count, receivers_count = len(supply), len(demand)
+    allocation = [[0.0] * receivers_count for _ in range(suppliers_count)]
     iterations = []
 
     while sum(supply) > EPS or sum(demand) > EPS:
@@ -344,35 +290,24 @@ def solve_max_element_method(values, supply, demand, blocked, suppliers, receive
             raise ValueError("Po ustawionych blokadach nie da sie zbudowac pelnego planu.")
 
         candidates = []
-        for i in range(supplier_count):
+        for i in range(suppliers_count):
             if supply[i] <= EPS:
                 continue
-            for j in range(receiver_count):
-                if demand[j] <= EPS or blocked[i][j]:
-                    continue
-                amount = min(supply[i], demand[j])
-                candidates.append(
-                    (
-                        values[i][j],
-                        route_priority(suppliers[i], receivers[j]),
-                        amount,
-                        i,
-                        j,
+            for j in range(receivers_count):
+                if demand[j] > EPS and not blocked[i][j]:
+                    candidates.append(
+                        (values[i][j], route_priority(suppliers[i], receivers[j]), min(supply[i], demand[j]), i, j)
                     )
-                )
 
         if not candidates:
             raise ValueError("Brak dostepnej trasy do dalszego przydzialu.")
 
-        candidates.sort(reverse=True)
         chosen = None
-
-        for value, priority, amount, i, j in candidates:
+        for value, _, amount, i, j in sorted(candidates, reverse=True):
             test_supply = supply[:]
             test_demand = demand[:]
             test_supply[i] -= amount
             test_demand[j] -= amount
-
             if can_finish_plan(test_supply, test_demand, blocked):
                 chosen = (value, amount, i, j)
                 break
@@ -384,7 +319,6 @@ def solve_max_element_method(values, supply, demand, blocked, suppliers, receive
         allocation[i][j] += amount
         supply[i] -= amount
         demand[j] -= amount
-
         if abs(supply[i]) < EPS:
             supply[i] = 0.0
         if abs(demand[j]) < EPS:
@@ -404,12 +338,7 @@ def solve_max_element_method(values, supply, demand, blocked, suppliers, receive
         )
 
     allocation, delta_steps = improve_plan_with_deltas(values, allocation, blocked)
-
-    total = sum(
-        allocation[i][j] * values[i][j]
-        for i in range(supplier_count)
-        for j in range(receiver_count)
-    )
+    total = sum(allocation[i][j] * values[i][j] for i in range(suppliers_count) for j in range(receivers_count))
 
     return {
         "values": values,
@@ -432,7 +361,11 @@ class TransportApp:
 
         self.supplier_count = tk.IntVar(value=2)
         self.receiver_count = tk.IntVar(value=3)
+        self.fake_cross_block_var = tk.BooleanVar(value=False)
+        self.summary_text = tk.StringVar(value="Wprowadz dane i kliknij Oblicz.")
 
+        self.supplier_names = []
+        self.receiver_names = []
         self.value_vars = []
         self.block_vars = []
         self.supply_vars = []
@@ -441,14 +374,6 @@ class TransportApp:
         self.sale_price_vars = []
         self.fake_receiver_block_vars = []
         self.fake_supplier_block_vars = []
-        self.fake_cross_block_var = tk.BooleanVar(value=False)
-        self.supplier_names = []
-        self.receiver_names = []
-
-        self.input_frame = None
-        self.result_frame = None
-        self.result_canvas = None
-        self.summary_text = tk.StringVar(value="Wprowadz dane i kliknij Oblicz.")
 
         self.build_window()
         self.root.bind_all("<MouseWheel>", self.scroll_results)
@@ -461,11 +386,9 @@ class TransportApp:
         top = ttk.Frame(self.root, padding=10)
         top.pack(fill="x")
 
-        ttk.Label(top, text="Dostawcy:").pack(side="left", padx=5)
-        ttk.Spinbox(top, from_=1, to=MAX_SIZE, width=5, textvariable=self.supplier_count).pack(side="left")
-
-        ttk.Label(top, text="Odbiorcy:").pack(side="left", padx=(15, 5))
-        ttk.Spinbox(top, from_=1, to=MAX_SIZE, width=5, textvariable=self.receiver_count).pack(side="left")
+        for text, variable in (("Dostawcy:", self.supplier_count), ("Odbiorcy:", self.receiver_count)):
+            ttk.Label(top, text=text).pack(side="left", padx=(15 if text == "Odbiorcy:" else 5, 5))
+            ttk.Spinbox(top, from_=1, to=MAX_SIZE, width=5, textvariable=variable).pack(side="left")
 
         ttk.Button(top, text="Utworz tabele", command=self.build_input_table).pack(side="left", padx=10)
         ttk.Button(top, text="Przyklad", command=self.load_example).pack(side="left", padx=5)
@@ -473,44 +396,48 @@ class TransportApp:
 
         self.input_frame = ttk.Frame(self.root, padding=10)
         self.input_frame.pack(fill="x")
-
-        ttk.Label(
-            self.root,
-            textvariable=self.summary_text,
-            font=("TkDefaultFont", 10, "bold"),
-            padding=(10, 5),
-        ).pack(anchor="w")
+        ttk.Label(self.root, textvariable=self.summary_text, font=("TkDefaultFont", 10, "bold"), padding=(10, 5)).pack(
+            anchor="w"
+        )
 
         result_area = ttk.Frame(self.root, padding=10)
         result_area.pack(fill="both", expand=True)
-
         self.result_canvas = tk.Canvas(result_area, highlightthickness=0)
         scrollbar = ttk.Scrollbar(result_area, orient="vertical", command=self.result_canvas.yview)
         self.result_frame = ttk.Frame(self.result_canvas)
-
-        self.result_frame.bind(
-            "<Configure>",
-            lambda event: self.result_canvas.configure(scrollregion=self.result_canvas.bbox("all")),
-        )
-
+        self.result_frame.bind("<Configure>", lambda event: self.result_canvas.configure(scrollregion=self.result_canvas.bbox("all")))
         self.result_canvas.create_window((0, 0), window=self.result_frame, anchor="nw")
         self.result_canvas.configure(yscrollcommand=scrollbar.set)
         self.result_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
     def scroll_results(self, event):
-        if self.result_canvas is None:
-            return
-
         if getattr(event, "num", None) == 4:
             self.result_canvas.yview_scroll(-3, "units")
         elif getattr(event, "num", None) == 5:
             self.result_canvas.yview_scroll(3, "units")
-        elif event.delta != 0:
-            direction = -1 if event.delta > 0 else 1
-            self.result_canvas.yview_scroll(direction * max(3, abs(event.delta) // 40), "units")
+        elif event.delta:
+            self.result_canvas.yview_scroll((-1 if event.delta > 0 else 1) * max(3, abs(event.delta) // 40), "units")
 
-    def build_input_table(self, keep_names=False):
+    def add_entry(self, parent, row, col, variable=None, width=10, disabled=False):
+        entry = ttk.Entry(parent, width=width, justify="center", textvariable=variable)
+        if disabled:
+            entry.insert(0, "0")
+            entry.configure(state="disabled")
+        entry.grid(row=row, column=col, padx=4, pady=4)
+        return entry
+
+    def add_cell(self, row, col, variable=None, block_var=None, disabled=False):
+        cell = ttk.Frame(self.input_frame, relief="solid", borderwidth=1, padding=4)
+        cell.grid(row=row, column=col, padx=3, pady=3)
+        entry = ttk.Entry(cell, width=8, justify="center", textvariable=variable)
+        if disabled:
+            entry.insert(0, "0")
+            entry.configure(state="disabled")
+        entry.pack()
+        ttk.Checkbutton(cell, text="Blokada", variable=block_var).pack()
+
+    def build_input_table(self):
         for widget in self.input_frame.winfo_children():
             widget.destroy()
 
@@ -518,11 +445,8 @@ class TransportApp:
         cols = max(1, min(MAX_SIZE, self.receiver_count.get()))
         self.supplier_count.set(rows)
         self.receiver_count.set(cols)
-
-        if not keep_names or len(self.supplier_names) != rows:
-            self.supplier_names = [f"D{i + 1}" for i in range(rows)]
-        if not keep_names or len(self.receiver_names) != cols:
-            self.receiver_names = [f"O{j + 1}" for j in range(cols)]
+        self.supplier_names = [f"D{i + 1}" for i in range(rows)]
+        self.receiver_names = [f"O{j + 1}" for j in range(cols)]
 
         self.value_vars = [[tk.StringVar(value="0") for _ in range(cols)] for _ in range(rows)]
         self.block_vars = [[tk.BooleanVar(value=False) for _ in range(cols)] for _ in range(rows)]
@@ -534,234 +458,92 @@ class TransportApp:
         self.fake_supplier_block_vars = [tk.BooleanVar(value=False) for _ in range(cols)]
         self.fake_cross_block_var = tk.BooleanVar(value=False)
 
-        show_fake_preview = "FD" not in self.supplier_names and "FO" not in self.receiver_names
-        display_receivers = self.receiver_names + (["FO"] if show_fake_preview else [])
-        display_rows = rows + (1 if show_fake_preview else 0)
-        display_cols = cols + (1 if show_fake_preview else 0)
+        display_receivers = self.receiver_names + ["FO"]
+        display_cols = cols + 1
+        display_rows = rows + 1
 
         ttk.Label(self.input_frame, text="").grid(row=0, column=0, padx=4, pady=4)
         for j, name in enumerate(display_receivers):
             ttk.Label(self.input_frame, text=name).grid(row=0, column=j + 1, padx=4, pady=4)
         ttk.Label(self.input_frame, text="Podaz").grid(row=0, column=display_cols + 1, padx=4, pady=4)
-        ttk.Label(self.input_frame, text="Koszty zakupu u dostawcy").grid(
-            row=0, column=display_cols + 2, padx=4, pady=4
-        )
+        ttk.Label(self.input_frame, text="Koszty zakupu u dostawcy").grid(row=0, column=display_cols + 2, padx=4, pady=4)
 
         for i, name in enumerate(self.supplier_names):
             ttk.Label(self.input_frame, text=name).grid(row=i + 1, column=0, padx=4, pady=4)
             for j in range(cols):
-                cell = ttk.Frame(self.input_frame, relief="solid", borderwidth=1, padding=4)
-                cell.grid(row=i + 1, column=j + 1, padx=3, pady=3)
+                self.add_cell(i + 1, j + 1, self.value_vars[i][j], self.block_vars[i][j])
+            self.add_cell(i + 1, cols + 1, block_var=self.fake_receiver_block_vars[i], disabled=True)
+            self.add_entry(self.input_frame, i + 1, display_cols + 1, self.supply_vars[i])
+            self.add_entry(self.input_frame, i + 1, display_cols + 2, self.purchase_cost_vars[i], width=18)
 
-                ttk.Entry(cell, width=8, justify="center", textvariable=self.value_vars[i][j]).pack()
-                ttk.Checkbutton(cell, text="Blokada", variable=self.block_vars[i][j]).pack()
-
-            if show_fake_preview:
-                cell = ttk.Frame(self.input_frame, relief="solid", borderwidth=1, padding=4)
-                cell.grid(row=i + 1, column=cols + 1, padx=3, pady=3)
-                entry = ttk.Entry(cell, width=8, justify="center")
-                entry.insert(0, "0")
-                entry.configure(state="disabled")
-                entry.pack()
-                ttk.Checkbutton(cell, text="Blokada", variable=self.fake_receiver_block_vars[i]).pack()
-
-            ttk.Entry(self.input_frame, width=10, justify="center", textvariable=self.supply_vars[i]).grid(
-                row=i + 1, column=display_cols + 1, padx=4, pady=4
-            )
-            ttk.Entry(
-                self.input_frame,
-                width=18,
-                justify="center",
-                textvariable=self.purchase_cost_vars[i],
-            ).grid(row=i + 1, column=display_cols + 2, padx=4, pady=4)
-
-        if show_fake_preview:
-            fake_row = rows + 1
-            ttk.Label(self.input_frame, text="FD").grid(row=fake_row, column=0, padx=4, pady=4)
-            for j in range(cols):
-                cell = ttk.Frame(self.input_frame, relief="solid", borderwidth=1, padding=4)
-                cell.grid(row=fake_row, column=j + 1, padx=3, pady=3)
-                entry = ttk.Entry(cell, width=8, justify="center")
-                entry.insert(0, "0")
-                entry.configure(state="disabled")
-                entry.pack()
-                ttk.Checkbutton(cell, text="Blokada", variable=self.fake_supplier_block_vars[j]).pack()
-
-            cell = ttk.Frame(self.input_frame, relief="solid", borderwidth=1, padding=4)
-            cell.grid(row=fake_row, column=cols + 1, padx=3, pady=3)
-            entry = ttk.Entry(cell, width=8, justify="center")
-            entry.insert(0, "0")
-            entry.configure(state="disabled")
-            entry.pack()
-            ttk.Checkbutton(cell, text="Blokada", variable=self.fake_cross_block_var).pack()
-
-            ttk.Entry(self.input_frame, width=10, justify="center", state="disabled").grid(
-                row=fake_row, column=display_cols + 1, padx=4, pady=4
-            )
-            ttk.Entry(self.input_frame, width=18, justify="center", state="disabled").grid(
-                row=fake_row, column=display_cols + 2, padx=4, pady=4
-            )
+        fake_row = rows + 1
+        ttk.Label(self.input_frame, text="FD").grid(row=fake_row, column=0, padx=4, pady=4)
+        for j in range(cols):
+            self.add_cell(fake_row, j + 1, block_var=self.fake_supplier_block_vars[j], disabled=True)
+        self.add_cell(fake_row, cols + 1, block_var=self.fake_cross_block_var, disabled=True)
+        self.add_entry(self.input_frame, fake_row, display_cols + 1, width=10, disabled=True)
+        self.add_entry(self.input_frame, fake_row, display_cols + 2, width=18, disabled=True)
 
         ttk.Label(self.input_frame, text="Popyt").grid(row=display_rows + 1, column=0, padx=4, pady=4)
         for j in range(cols):
-            ttk.Entry(self.input_frame, width=10, justify="center", textvariable=self.demand_vars[j]).grid(
-                row=display_rows + 1, column=j + 1, padx=4, pady=4
-            )
-        if show_fake_preview:
-            ttk.Entry(self.input_frame, width=10, justify="center", state="disabled").grid(
-                row=display_rows + 1, column=cols + 1, padx=4, pady=4
-            )
+            self.add_entry(self.input_frame, display_rows + 1, j + 1, self.demand_vars[j])
+        self.add_entry(self.input_frame, display_rows + 1, cols + 1, disabled=True)
 
-        ttk.Label(self.input_frame, text="Cena sprzedazy u odbiorcy").grid(
-            row=display_rows + 2, column=0, padx=4, pady=4
-        )
+        ttk.Label(self.input_frame, text="Cena sprzedazy u odbiorcy").grid(row=display_rows + 2, column=0, padx=4, pady=4)
         for j in range(cols):
-            ttk.Entry(self.input_frame, width=10, justify="center", textvariable=self.sale_price_vars[j]).grid(
-                row=display_rows + 2, column=j + 1, padx=4, pady=4
-            )
-        if show_fake_preview:
-            ttk.Entry(self.input_frame, width=10, justify="center", state="disabled").grid(
-                row=display_rows + 2, column=cols + 1, padx=4, pady=4
-            )
-
+            self.add_entry(self.input_frame, display_rows + 2, j + 1, self.sale_price_vars[j])
+        self.add_entry(self.input_frame, display_rows + 2, cols + 1, disabled=True)
         self.clear_results()
 
     def load_example(self):
         self.supplier_count.set(2)
         self.receiver_count.set(3)
         self.build_input_table()
-
-        transport_costs = [
-            [8, 14, 17],
-            [12, 9, 19],
-        ]
-        supply = [20, 30]
-        purchase_costs = [10, 12]
-        demand = [10, 28, 27]
-        sale_prices = [30, 25, 30]
-        blocked = [
-            [False, True, False],
-            [False, False, False],
-        ]
-
-        self.fill_input_table(transport_costs, supply, demand, blocked, purchase_costs, sale_prices)
+        self.fill_input_table(
+            [[8, 14, 17], [12, 9, 19]],
+            [20, 30],
+            [10, 28, 27],
+            [[False, True, False], [False, False, False]],
+            [10, 12],
+            [30, 25, 30],
+        )
 
     def fill_input_table(self, transport_costs, supply, demand, blocked, purchase_costs, sale_prices):
-        for i in range(len(supply)):
-            self.supply_vars[i].set(str(supply[i]))
+        for i, amount in enumerate(supply):
+            self.supply_vars[i].set(str(amount))
             self.purchase_cost_vars[i].set(str(purchase_costs[i]))
-            for j in range(len(demand)):
+            for j, value in enumerate(demand):
                 self.value_vars[i][j].set(str(transport_costs[i][j]))
                 self.block_vars[i][j].set(blocked[i][j])
-
-        for j in range(len(demand)):
-            self.demand_vars[j].set(str(demand[j]))
+        for j, amount in enumerate(demand):
+            self.demand_vars[j].set(str(amount))
             self.sale_price_vars[j].set(str(sale_prices[j]))
 
     def read_input_data(self):
-        rows = self.supplier_count.get()
-        cols = self.receiver_count.get()
-
+        rows, cols = self.supplier_count.get(), self.receiver_count.get()
         transport_costs = [
             [
-                parse_number(
-                    self.value_vars[i][j].get(),
-                    f"koszt transportu {self.supplier_names[i]}-{self.receiver_names[j]}",
-                )
+                parse_number(self.value_vars[i][j].get(), f"koszt transportu {self.supplier_names[i]}-{self.receiver_names[j]}")
                 for j in range(cols)
             ]
             for i in range(rows)
         ]
-        blocked = [
-            [self.block_vars[i][j].get() for j in range(cols)]
-            for i in range(rows)
-        ]
-        supply = [
-            parse_number(self.supply_vars[i].get(), f"podaz {self.supplier_names[i]}")
-            for i in range(rows)
-        ]
-        demand = [
-            parse_number(self.demand_vars[j].get(), f"popyt {self.receiver_names[j]}")
-            for j in range(cols)
-        ]
+        blocked = [[self.block_vars[i][j].get() for j in range(cols)] for i in range(rows)]
+        supply = [parse_number(self.supply_vars[i].get(), f"podaz {self.supplier_names[i]}") for i in range(rows)]
+        demand = [parse_number(self.demand_vars[j].get(), f"popyt {self.receiver_names[j]}") for j in range(cols)]
         purchase_costs = [
-            parse_number(self.purchase_cost_vars[i].get(), f"koszt zakupu {self.supplier_names[i]}")
-            for i in range(rows)
+            parse_number(self.purchase_cost_vars[i].get(), f"koszt zakupu {self.supplier_names[i]}") for i in range(rows)
         ]
-        sale_prices = [
-            parse_number(self.sale_price_vars[j].get(), f"cena sprzedazy {self.receiver_names[j]}")
-            for j in range(cols)
-        ]
+        sale_prices = [parse_number(self.sale_price_vars[j].get(), f"cena sprzedazy {self.receiver_names[j]}") for j in range(cols)]
+        return transport_costs, supply, demand, blocked, purchase_costs, sale_prices, self.supplier_names[:], self.receiver_names[:]
 
-        return (
-            transport_costs,
-            supply,
-            demand,
-            blocked,
-            purchase_costs,
-            sale_prices,
-            self.supplier_names[:],
-            self.receiver_names[:],
-        )
-
-    def read_data(self):
-        (
-            transport_costs,
-            supply,
-            demand,
-            blocked,
-            purchase_costs,
-            sale_prices,
-            suppliers,
-            receivers,
-        ) = self.read_input_data()
-        transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers, _ = (
-            self.balance_input_data(
-                transport_costs,
-                supply,
-                demand,
-                blocked,
-                purchase_costs,
-                sale_prices,
-                suppliers,
-                receivers,
-            )
-        )
-        if len(suppliers) > MAX_SIZE or len(receivers) > MAX_SIZE:
-            raise ValueError("Po zbilansowaniu tabela przekroczylaby limit 10 x 10.")
-        values = calculate_unit_profits(transport_costs, purchase_costs, sale_prices, suppliers, receivers)
-
-        return values, supply, demand, blocked, suppliers, receivers
-
-    def balance_input_data(
-        self,
-        transport_costs,
-        supply,
-        demand,
-        blocked,
-        purchase_costs,
-        sale_prices,
-        suppliers,
-        receivers,
-    ):
-        supply_sum = sum(supply)
-        demand_sum = sum(demand)
-
+    def balance_input_data(self, transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers):
+        supply_sum, demand_sum = sum(supply), sum(demand)
         if abs(supply_sum - demand_sum) < EPS:
-            return transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers, (
-                "Problem byl juz zbilansowany."
-            )
+            return transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers
 
-        fake_receiver_blocks = [
-            var.get() for var in self.fake_receiver_block_vars[:len(suppliers)]
-        ]
-        fake_supplier_blocks = [
-            var.get() for var in self.fake_supplier_block_vars[:len(receivers)]
-        ]
-        while len(fake_receiver_blocks) < len(suppliers):
-            fake_receiver_blocks.append(False)
-        while len(fake_supplier_blocks) < len(receivers):
-            fake_supplier_blocks.append(False)
+        fake_receiver_blocks = [var.get() for var in self.fake_receiver_block_vars[: len(suppliers)]]
+        fake_supplier_blocks = [var.get() for var in self.fake_supplier_block_vars[: len(receivers)]]
 
         for i, row in enumerate(transport_costs):
             row.append(0.0)
@@ -775,18 +557,7 @@ class TransportApp:
         supply.append(demand_sum)
         purchase_costs.append(0.0)
         suppliers.append("FD")
-
-        return (
-            transport_costs,
-            supply,
-            demand,
-            blocked,
-            purchase_costs,
-            sale_prices,
-            suppliers,
-            receivers,
-            "Dodano fikcyjnego dostawce FD i odbiorce FO.",
-        )
+        return transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers
 
     def clear_results(self):
         for widget in self.result_frame.winfo_children():
@@ -795,39 +566,15 @@ class TransportApp:
 
     def calculate(self):
         try:
-            (
-                transport_costs,
-                supply,
-                demand,
-                blocked,
-                purchase_costs,
-                sale_prices,
-                suppliers,
-                receivers,
-            ) = self.read_input_data()
-            transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers, _ = (
-                self.balance_input_data(
-                    transport_costs,
-                    supply,
-                    demand,
-                    blocked,
-                    purchase_costs,
-                    sale_prices,
-                    suppliers,
-                    receivers,
-                )
-            )
+            data = self.read_input_data()
+            transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers = self.balance_input_data(*data)
             if len(suppliers) > MAX_SIZE or len(receivers) > MAX_SIZE:
                 raise ValueError("Po zbilansowaniu tabela przekroczylaby limit 10 x 10.")
+
             values = calculate_unit_profits(transport_costs, purchase_costs, sale_prices, suppliers, receivers)
             result = solve_max_element_method(values, supply, demand, blocked, suppliers, receivers)
             result["economic_summary"] = calculate_economic_summary(
-                result["allocation"],
-                transport_costs,
-                purchase_costs,
-                sale_prices,
-                result["suppliers"],
-                result["receivers"],
+                result["allocation"], transport_costs, purchase_costs, sale_prices, result["suppliers"], result["receivers"]
             )
         except ValueError as error:
             messagebox.showerror("Blad danych", str(error))
@@ -840,11 +587,7 @@ class TransportApp:
 
     def show_result(self, result):
         self.clear_results()
-        self.summary_text.set(
-            f"Zysk calkowity: {result['total']:.2f} | "
-            f"Liczba iteracji: {len(result['iterations'])}"
-        )
-
+        self.summary_text.set(f"Zysk calkowity: {result['total']:.2f} | Liczba iteracji: {len(result['iterations'])}")
         ttk.Label(
             self.result_frame,
             text="Opis komorek: a = przydzial, z = zysk jednostkowy, X = brak przydzialu lub zablokowana trasa.",
@@ -853,111 +596,64 @@ class TransportApp:
 
         final_box = ttk.LabelFrame(self.result_frame, text="Tabela koncowa", padding=8)
         final_box.pack(fill="x", pady=5)
-        self.draw_table(
-            final_box,
-            result,
-            result["allocation"],
-            [0.0] * len(result["suppliers"]),
-            [0.0] * len(result["receivers"]),
-            show_duals=True,
-        )
+        self.draw_table(final_box, result, result["allocation"], [0.0] * len(result["suppliers"]), [0.0] * len(result["receivers"]), show_duals=True)
         self.draw_economic_summary(result)
 
         for step in result["iterations"]:
             box = ttk.LabelFrame(self.result_frame, text=f"Iteracja {step['number']}", padding=8)
             box.pack(fill="x", pady=5)
-
-            text = (
-                f"Wybrano trase {result['suppliers'][step['row']]} -> "
-                f"{result['receivers'][step['col']]}, "
-                f"zysk jednostkowy = {step['value']}, przydzial = {step['amount']}."
-            )
-            ttk.Label(box, text=text).pack(anchor="w", pady=(0, 5))
-            self.draw_table(
+            ttk.Label(
                 box,
-                result,
-                step["allocation"],
-                step["supply"],
-                step["demand"],
-                (step["row"], step["col"]),
-            )
+                text=(
+                    f"Wybrano trase {result['suppliers'][step['row']]} -> {result['receivers'][step['col']]}, "
+                    f"zysk jednostkowy = {step['value']}, przydzial = {step['amount']}."
+                ),
+            ).pack(anchor="w", pady=(0, 5))
+            self.draw_table(box, result, step["allocation"], step["supply"], step["demand"], (step["row"], step["col"]))
 
     def draw_economic_summary(self, result):
-        summary = result.get("economic_summary")
-        if summary is None:
-            return
-
         box = ttk.LabelFrame(self.result_frame, text="Podsumowanie ekonomiczne", padding=8)
         box.pack(fill="x", pady=5)
-
-        lines = [
-            f"Przychod calkowity: {format_number(summary['revenue'])}",
-            f"Koszt transportu: {format_number(summary['transport_cost'])}",
-            f"Koszt zakupu: {format_number(summary['purchase_cost'])}",
-        ]
-        for line in lines:
-            ttk.Label(box, text=line).pack(anchor="w")
+        for label, key in (
+            ("Przychod calkowity", "revenue"),
+            ("Koszt transportu", "transport_cost"),
+            ("Koszt zakupu", "purchase_cost"),
+        ):
+            ttk.Label(box, text=f"{label}: {format_number(result['economic_summary'][key])}").pack(anchor="w")
 
     def draw_table(self, parent, result, allocation, supply, demand, selected=None, show_duals=False):
         table = ttk.Frame(parent)
         table.pack(anchor="w")
-        supplier_potentials = []
-        receiver_potentials = []
-        if show_duals:
-            supplier_potentials, receiver_potentials = calculate_dual_variables(result["values"], allocation)
+        alpha, beta = (calculate_dual_variables(result["values"], allocation) if show_duals else ([], []))
 
         ttk.Label(table, text="").grid(row=0, column=0, padx=3, pady=3)
         for j, name in enumerate(result["receivers"]):
             ttk.Label(table, text=name).grid(row=0, column=j + 1, padx=3, pady=3)
-        right_header = "alpha_i" if show_duals else "Pozostala podaz"
-        ttk.Label(table, text=right_header).grid(row=0, column=len(result["receivers"]) + 1, padx=3, pady=3)
+        ttk.Label(table, text="alpha_i" if show_duals else "Pozostala podaz").grid(row=0, column=len(result["receivers"]) + 1, padx=3, pady=3)
 
         for i, name in enumerate(result["suppliers"]):
             ttk.Label(table, text=name).grid(row=i + 1, column=0, padx=3, pady=3)
             for j in range(len(result["receivers"])):
-                allocation_text = format_number(allocation[i][j]) if allocation[i][j] > EPS else "X"
-                text = f"a={allocation_text}\nz={format_number(result['values'][i][j])}"
-
+                amount = format_number(allocation[i][j]) if allocation[i][j] > EPS else "X"
+                text = f"a={amount}\nz={format_number(result['values'][i][j])}"
+                color = "#e3ddd5"
                 if selected == (i, j):
                     color = "#bfe3b4"
                 elif result["blocked"][i][j] and allocation[i][j] <= EPS:
                     text = f"X\nz={format_number(result['values'][i][j])}"
                     color = "#f3c7c7"
-                else:
-                    color = "#e3ddd5"
+                tk.Label(table, text=text, width=12, height=3, relief="solid", bg=color, fg="#1f1f1f", font=("TkDefaultFont", 11)).grid(
+                    row=i + 1, column=j + 1, padx=2, pady=2
+                )
 
-                tk.Label(
-                    table,
-                    text=text,
-                    width=12,
-                    height=3,
-                    relief="solid",
-                    bg=color,
-                    fg="#1f1f1f",
-                    font=("TkDefaultFont", 11),
-                ).grid(row=i + 1, column=j + 1, padx=2, pady=2)
-
-            right_value = (
-                format_number(supplier_potentials[i])
-                if show_duals and supplier_potentials[i] is not None
-                else format_number(supply[i])
-            )
-            ttk.Label(table, text=right_value).grid(
-                row=i + 1, column=len(result["receivers"]) + 1, padx=3, pady=3
-            )
+            value = alpha[i] if show_duals and alpha[i] is not None else supply[i]
+            ttk.Label(table, text=format_number(value)).grid(row=i + 1, column=len(result["receivers"]) + 1, padx=3, pady=3)
 
         bottom_row = len(result["suppliers"]) + 1
-        bottom_label = "beta_j" if show_duals else "Pozostaly popyt"
-        ttk.Label(table, text=bottom_label).grid(row=bottom_row, column=0, padx=3, pady=3)
+        ttk.Label(table, text="beta_j" if show_duals else "Pozostaly popyt").grid(row=bottom_row, column=0, padx=3, pady=3)
         for j in range(len(result["receivers"])):
-            bottom_value = (
-                format_number(receiver_potentials[j])
-                if show_duals and receiver_potentials[j] is not None
-                else format_number(demand[j])
-            )
-            ttk.Label(table, text=bottom_value).grid(
-                row=bottom_row, column=j + 1, padx=3, pady=3
-            )
+            value = beta[j] if show_duals and beta[j] is not None else demand[j]
+            ttk.Label(table, text=format_number(value)).grid(row=bottom_row, column=j + 1, padx=3, pady=3)
 
 
 def main():
