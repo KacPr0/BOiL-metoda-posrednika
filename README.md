@@ -1,14 +1,14 @@
 # Problem transportowy
 
-## Program umozliwia
+Aplikacja w Pythonie (`Tkinter`) liczaca problem transportowy metoda maksymalnego elementu macierzy.
 
-- wpisanie danych dla maksymalnie 10 dostawcow i 10 odbiorcow,
-- liczenie metoda maksymalnego elementu macierzy,
+## Funkcje
+
+- maksymalnie 10 dostawcow i 10 odbiorcow,
 - blokowanie wybranych tras,
-- bilansowanie przez fikcyjnego dostawce albo odbiorce,
-- pokazanie fikcyjnego dostawcy/odbiorcy w tabeli po kliknieciu `Zbilansuj`,
-- pokazanie wynikow posrednich dla kazdej iteracji,
-- pokazanie tabeli koncowej.
+- bilansowanie przez fikcyjnego dostawce `DF` albo fikcyjnego odbiorce `OF`,
+- przycisk `Zbilansuj`, ktory pokazuje `DF/OF` przed obliczeniami,
+- tabela koncowa i tabela dla kazdej iteracji.
 
 ## Uruchomienie
 
@@ -16,11 +16,10 @@
 /opt/homebrew/bin/python3.13 app.py
 ```
 
-## Logika algorytmu
+## Algorytm
 
-1. Program odczytuje macierz, podaz, popyt i blokady.
-2. Przycisk `Zbilansuj` dodaje fikcyjny wiersz albo kolumne przed obliczaniem.
-3. Szuka najwiekszej dostepnej wartosci w macierzy.
-4. Przydziela tyle, ile sie da: `min(podaz, popyt)`.
-5. Zapisuje stan tabeli po iteracji.
-6. Powtarza kroki az do wyczerpania podazy i popytu.
+1. Program sprawdza, czy suma podazy jest rowna sumie popytu.
+2. Jezeli nie, dodaje fikcyjnego dostawce albo odbiorce.
+3. W kazdej iteracji wybiera dostepna trase o najwiekszej wartosci.
+4. Przydziela `min(pozostala podaz, pozostaly popyt)`.
+5. Zapisuje stan po iteracji i pokazuje go w tabeli.

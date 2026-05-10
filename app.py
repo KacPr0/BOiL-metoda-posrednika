@@ -3,169 +3,247 @@ from tkinter import messagebox, ttk
 
 
 MAX_SIZE = 10
+EPS = 0.000001
 
 
-def kopiuj_macierz(macierz):
-    return [wiersz[:] for wiersz in macierz]
+def copy_matrix(matrix):
+    return [row[:] for row in matrix]
 
 
-def bilansuj_problem(zyski, podaz, popyt, blokady, dostawcy, odbiorcy):
-    suma_podazy = sum(podaz)
-    suma_popytu = sum(popyt)
-    komunikat = "Problem byl juz zbilansowany."
+def parse_number(text, field_name, allow_negative=False):
+    text = text.strip().replace(",", ".")
+    if text == "":
+        raise ValueError(f"Pole '{field_name}' jest puste.")
 
-    if suma_podazy > suma_popytu:
-        roznica = suma_podazy - suma_popytu
-        for wiersz in zyski:
-            wiersz.append(0.0)
-        for wiersz in blokady:
-            wiersz.append(False)
-        popyt.append(roznica)
-        odbiorcy.append("OF")
-        komunikat = "Dodano fikcyjnego odbiorce."
+    try:
+        value = float(text)
+    except ValueError as error:
+        raise ValueError(f"Pole '{field_name}' musi byc liczba.") from error
 
-    elif suma_popytu > suma_podazy:
-        roznica = suma_popytu - suma_podazy
-        zyski.append([0.0] * len(popyt))
-        blokady.append([False] * len(popyt))
-        podaz.append(roznica)
-        dostawcy.append("DF")
-        komunikat = "Dodano fikcyjnego dostawce."
+    if value < 0 and not allow_negative:
+        raise ValueError(f"Pole '{field_name}' nie moze byc ujemne.")
 
-    return komunikat
+    return value
 
 
-def czy_da_sie_domknac(podaz, popyt, blokady):
-    for i in range(len(podaz)):
-        if podaz[i] > 0 and not any(popyt[j] > 0 and not blokady[i][j] for j in range(len(popyt))):
-            return False
+def balance_data(values, supply, demand, blocked, suppliers, receivers):
+    values = copy_matrix(values)
+    blocked = copy_matrix(blocked)
+    supply = supply[:]
+    demand = demand[:]
+    suppliers = suppliers[:]
+    receivers = receivers[:]
 
-    for j in range(len(popyt)):
-        if popyt[j] > 0 and not any(podaz[i] > 0 and not blokady[i][j] for i in range(len(podaz))):
-            return False
+    supply_sum = sum(supply)
+    demand_sum = sum(demand)
 
-    return True
+    if abs(supply_sum - demand_sum) < EPS:
+        return values, supply, demand, blocked, suppliers, receivers, "Problem byl juz zbilansowany."
+
+    if supply_sum > demand_sum:
+        diff = supply_sum - demand_sum
+        for row in values:
+            row.append(0.0)
+        for row in blocked:
+            row.append(False)
+        demand.append(diff)
+        receivers.append("OF")
+        return values, supply, demand, blocked, suppliers, receivers, "Dodano fikcyjnego odbiorce OF."
+
+    diff = demand_sum - supply_sum
+    values.append([0.0] * len(demand))
+    blocked.append([False] * len(demand))
+    supply.append(diff)
+    suppliers.append("DF")
+    return values, supply, demand, blocked, suppliers, receivers, "Dodano fikcyjnego dostawce DF."
 
 
-def rozwiaz_metoda_maksymalnego_elementu(zyski, podaz, popyt, blokady, dostawcy, odbiorcy):
-    zyski = kopiuj_macierz(zyski)
-    blokady = kopiuj_macierz(blokady)
-    podaz = podaz[:]
-    popyt = popyt[:]
-    dostawcy = dostawcy[:]
-    odbiorcy = odbiorcy[:]
+def can_finish_plan(supply, demand, blocked):
+    if abs(sum(supply) - sum(demand)) > EPS:
+        return False
 
-    komunikat_bilansu = bilansuj_problem(
-        zyski, podaz, popyt, blokady, dostawcy, odbiorcy
+    supplier_count = len(supply)
+    receiver_count = len(demand)
+    start = 0
+    first_supplier = 1
+    first_receiver = first_supplier + supplier_count
+    end = first_receiver + receiver_count
+    size = end + 1
+    capacity = [[0.0 for _ in range(size)] for _ in range(size)]
+
+    for i, amount in enumerate(supply):
+        capacity[start][first_supplier + i] = amount
+
+    for i in range(supplier_count):
+        for j in range(receiver_count):
+            if not blocked[i][j]:
+                capacity[first_supplier + i][first_receiver + j] = sum(supply)
+
+    for j, amount in enumerate(demand):
+        capacity[first_receiver + j][end] = amount
+
+    flow = 0.0
+
+    while True:
+        parent = [-1] * size
+        parent[start] = start
+        queue = [start]
+
+        while queue and parent[end] == -1:
+            current = queue.pop(0)
+            for next_node in range(size):
+                if parent[next_node] == -1 and capacity[current][next_node] > EPS:
+                    parent[next_node] = current
+                    queue.append(next_node)
+
+        if parent[end] == -1:
+            break
+
+        pushed = float("inf")
+        node = end
+        while node != start:
+            previous = parent[node]
+            pushed = min(pushed, capacity[previous][node])
+            node = previous
+
+        node = end
+        while node != start:
+            previous = parent[node]
+            capacity[previous][node] -= pushed
+            capacity[node][previous] += pushed
+            node = previous
+
+        flow += pushed
+
+    return abs(flow - sum(demand)) < EPS
+
+
+def solve_max_element_method(values, supply, demand, blocked, suppliers, receivers):
+    values, supply, demand, blocked, suppliers, receivers, balance_note = balance_data(
+        values, supply, demand, blocked, suppliers, receivers
     )
 
-    liczba_dostawcow = len(podaz)
-    liczba_odbiorcow = len(popyt)
-    alokacja = [[0.0 for _ in range(liczba_odbiorcow)] for _ in range(liczba_dostawcow)]
-    iteracje = []
+    supplier_count = len(supply)
+    receiver_count = len(demand)
+    allocation = [[0.0 for _ in range(receiver_count)] for _ in range(supplier_count)]
+    iterations = []
 
-    while sum(podaz) > 0 or sum(popyt) > 0:
-        if not czy_da_sie_domknac(podaz, popyt, blokady):
+    while sum(supply) > EPS or sum(demand) > EPS:
+        if not can_finish_plan(supply, demand, blocked):
             raise ValueError("Po ustawionych blokadach nie da sie zbudowac pelnego planu.")
 
-        najlepszy_wiersz = -1
-        najlepsza_kolumna = -1
-        najlepsza_wartosc = -1
-
-        for i in range(liczba_dostawcow):
-            if podaz[i] <= 0:
+        candidates = []
+        for i in range(supplier_count):
+            if supply[i] <= EPS:
                 continue
-            for j in range(liczba_odbiorcow):
-                if popyt[j] <= 0:
+            for j in range(receiver_count):
+                if demand[j] <= EPS or blocked[i][j]:
                     continue
-                if blokady[i][j]:
-                    continue
-                if zyski[i][j] > najlepsza_wartosc:
-                    najlepsza_wartosc = zyski[i][j]
-                    najlepszy_wiersz = i
-                    najlepsza_kolumna = j
+                amount = min(supply[i], demand[j])
+                candidates.append((values[i][j], amount, i, j))
 
-        if najlepszy_wiersz == -1 or najlepsza_kolumna == -1:
-            raise ValueError("Nie znaleziono dostepnej trasy do dalszego przydzialu.")
+        if not candidates:
+            raise ValueError("Brak dostepnej trasy do dalszego przydzialu.")
 
-        przydzial = min(podaz[najlepszy_wiersz], popyt[najlepsza_kolumna])
-        alokacja[najlepszy_wiersz][najlepsza_kolumna] += przydzial
-        podaz[najlepszy_wiersz] -= przydzial
-        popyt[najlepsza_kolumna] -= przydzial
+        candidates.sort(reverse=True)
+        chosen = None
 
-        iteracje.append(
+        for value, amount, i, j in candidates:
+            test_supply = supply[:]
+            test_demand = demand[:]
+            test_supply[i] -= amount
+            test_demand[j] -= amount
+
+            if can_finish_plan(test_supply, test_demand, blocked):
+                chosen = (value, amount, i, j)
+                break
+
+        if chosen is None:
+            raise ValueError("Blokady nie pozwalaja domknac calego planu.")
+
+        value, amount, i, j = chosen
+        allocation[i][j] += amount
+        supply[i] -= amount
+        demand[j] -= amount
+
+        if abs(supply[i]) < EPS:
+            supply[i] = 0.0
+        if abs(demand[j]) < EPS:
+            demand[j] = 0.0
+
+        iterations.append(
             {
-                "nr": len(iteracje) + 1,
-                "wiersz": najlepszy_wiersz,
-                "kolumna": najlepsza_kolumna,
-                "wartosc": najlepsza_wartosc,
-                "przydzial": przydzial,
-                "alokacja": kopiuj_macierz(alokacja),
-                "podaz": podaz[:],
-                "popyt": popyt[:],
+                "number": len(iterations) + 1,
+                "row": i,
+                "col": j,
+                "value": value,
+                "amount": amount,
+                "allocation": copy_matrix(allocation),
+                "supply": supply[:],
+                "demand": demand[:],
             }
         )
 
-    wynik = sum(
-        alokacja[i][j] * zyski[i][j]
-        for i in range(liczba_dostawcow)
-        for j in range(liczba_odbiorcow)
+    total = sum(
+        allocation[i][j] * values[i][j]
+        for i in range(supplier_count)
+        for j in range(receiver_count)
     )
 
     return {
-        "alokacja": alokacja,
-        "iteracje": iteracje,
-        "wynik": wynik,
-        "zyski": zyski,
-        "blokady": blokady,
-        "dostawcy": dostawcy,
-        "odbiorcy": odbiorcy,
-        "komunikat_bilansu": komunikat_bilansu,
+        "values": values,
+        "blocked": blocked,
+        "suppliers": suppliers,
+        "receivers": receivers,
+        "allocation": allocation,
+        "iterations": iterations,
+        "total": total,
+        "balance_note": balance_note,
     }
 
 
-class AplikacjaTransportowa:
+class TransportApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Problem transportowy")
+        self.root.title("Problem transportowy - metoda maksymalnego elementu")
         self.root.geometry("1300x850")
 
-        self.liczba_dostawcow = tk.IntVar(value=3)
-        self.liczba_odbiorcow = tk.IntVar(value=3)
+        self.supplier_count = tk.IntVar(value=2)
+        self.receiver_count = tk.IntVar(value=3)
 
-        self.pola_zyskow = []
-        self.pola_blokad = []
-        self.pola_podazy = []
-        self.pola_popytu = []
-        self.nazwy_dostawcow = []
-        self.nazwy_odbiorcow = []
+        self.value_vars = []
+        self.block_vars = []
+        self.supply_vars = []
+        self.demand_vars = []
+        self.supplier_names = []
+        self.receiver_names = []
 
-        self.ramka_danych = None
-        self.ramka_wynikow = None
-        self.canvas_wynikow = None
-        self.opis_wyniku = tk.StringVar(value="Wpisz dane i kliknij Oblicz.")
+        self.input_frame = None
+        self.result_frame = None
+        self.result_canvas = None
+        self.summary_text = tk.StringVar(value="Wprowadz dane i kliknij Oblicz.")
 
-        self.zbuduj_okno()
-        self.root.bind_all("<MouseWheel>", self.scroll_myszki)
-        self.root.bind_all("<Button-4>", self.scroll_myszki)
-        self.root.bind_all("<Button-5>", self.scroll_myszki)
-        self.utworz_tabele()
-        self.wczytaj_przyklad()
+        self.build_window()
+        self.root.bind_all("<MouseWheel>", self.scroll_results)
+        self.root.bind_all("<Button-4>", self.scroll_results)
+        self.root.bind_all("<Button-5>", self.scroll_results)
+        self.build_input_table()
+        self.load_example()
 
-    def zbuduj_okno(self):
-        gora = ttk.Frame(self.root, padding=10)
-        gora.pack(fill="x")
+    def build_window(self):
+        top = ttk.Frame(self.root, padding=10)
+        top.pack(fill="x")
 
-        ttk.Label(gora, text="Dostawcy:").pack(side="left", padx=5)
-        ttk.Spinbox(gora, from_=1, to=MAX_SIZE, width=5, textvariable=self.liczba_dostawcow).pack(side="left")
+        ttk.Label(top, text="Dostawcy:").pack(side="left", padx=5)
+        ttk.Spinbox(top, from_=1, to=MAX_SIZE, width=5, textvariable=self.supplier_count).pack(side="left")
 
-        ttk.Label(gora, text="Odbiorcy:").pack(side="left", padx=(15, 5))
-        ttk.Spinbox(gora, from_=1, to=MAX_SIZE, width=5, textvariable=self.liczba_odbiorcow).pack(side="left")
+        ttk.Label(top, text="Odbiorcy:").pack(side="left", padx=(15, 5))
+        ttk.Spinbox(top, from_=1, to=MAX_SIZE, width=5, textvariable=self.receiver_count).pack(side="left")
 
-        ttk.Button(gora, text="Utworz tabele", command=self.utworz_tabele).pack(side="left", padx=10)
-        ttk.Button(gora, text="Przyklad", command=self.wczytaj_przyklad).pack(side="left", padx=5)
-        ttk.Button(gora, text="Zbilansuj", command=self.zbilansuj_tabele).pack(side="left", padx=5)
-        ttk.Button(gora, text="Oblicz", command=self.oblicz).pack(side="left", padx=5)
+        ttk.Button(top, text="Utworz tabele", command=self.build_input_table).pack(side="left", padx=10)
+        ttk.Button(top, text="Przyklad", command=self.load_example).pack(side="left", padx=5)
+        ttk.Button(top, text="Zbilansuj", command=self.balance_input_table).pack(side="left", padx=5)
+        ttk.Button(top, text="Oblicz", command=self.calculate).pack(side="left", padx=5)
 
         ttk.Label(
             self.root,
@@ -173,378 +251,274 @@ class AplikacjaTransportowa:
             padding=(10, 0),
         ).pack(anchor="w")
 
-        self.ramka_danych = ttk.Frame(self.root, padding=10)
-        self.ramka_danych.pack(fill="x")
+        self.input_frame = ttk.Frame(self.root, padding=10)
+        self.input_frame.pack(fill="x")
 
         ttk.Label(
             self.root,
-            textvariable=self.opis_wyniku,
+            textvariable=self.summary_text,
             font=("TkDefaultFont", 10, "bold"),
             padding=(10, 5),
         ).pack(anchor="w")
 
-        obszar = ttk.Frame(self.root, padding=10)
-        obszar.pack(fill="both", expand=True)
+        result_area = ttk.Frame(self.root, padding=10)
+        result_area.pack(fill="both", expand=True)
 
-        canvas = tk.Canvas(obszar, highlightthickness=0)
-        self.canvas_wynikow = canvas
-        pasek = ttk.Scrollbar(obszar, orient="vertical", command=canvas.yview)
-        self.ramka_wynikow = ttk.Frame(canvas)
+        self.result_canvas = tk.Canvas(result_area, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(result_area, orient="vertical", command=self.result_canvas.yview)
+        self.result_frame = ttk.Frame(self.result_canvas)
 
-        self.ramka_wynikow.bind(
+        self.result_frame.bind(
             "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+            lambda event: self.result_canvas.configure(scrollregion=self.result_canvas.bbox("all")),
         )
 
-        canvas.create_window((0, 0), window=self.ramka_wynikow, anchor="nw")
-        canvas.configure(yscrollcommand=pasek.set)
+        self.result_canvas.create_window((0, 0), window=self.result_frame, anchor="nw")
+        self.result_canvas.configure(yscrollcommand=scrollbar.set)
+        self.result_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
-        canvas.pack(side="left", fill="both", expand=True)
-        pasek.pack(side="right", fill="y")
-
-    def scroll_myszki(self, event):
-        if self.canvas_wynikow is None:
+    def scroll_results(self, event):
+        if self.result_canvas is None:
             return
 
         if getattr(event, "num", None) == 4:
-            self.canvas_wynikow.yview_scroll(-3, "units")
+            self.result_canvas.yview_scroll(-3, "units")
         elif getattr(event, "num", None) == 5:
-            self.canvas_wynikow.yview_scroll(3, "units")
+            self.result_canvas.yview_scroll(3, "units")
         elif event.delta != 0:
-            kierunek = -1 if event.delta > 0 else 1
-            przesuniecie = max(3, abs(event.delta) // 40)
-            self.canvas_wynikow.yview_scroll(kierunek * przesuniecie, "units")
+            direction = -1 if event.delta > 0 else 1
+            self.result_canvas.yview_scroll(direction * max(3, abs(event.delta) // 40), "units")
 
-    def utworz_tabele(self, resetuj_nazwy=True):
-        for widget in self.ramka_danych.winfo_children():
+    def build_input_table(self, keep_names=False):
+        for widget in self.input_frame.winfo_children():
             widget.destroy()
 
-        wiersze = max(1, min(MAX_SIZE, self.liczba_dostawcow.get()))
-        kolumny = max(1, min(MAX_SIZE, self.liczba_odbiorcow.get()))
-        self.liczba_dostawcow.set(wiersze)
-        self.liczba_odbiorcow.set(kolumny)
+        rows = max(1, min(MAX_SIZE, self.supplier_count.get()))
+        cols = max(1, min(MAX_SIZE, self.receiver_count.get()))
+        self.supplier_count.set(rows)
+        self.receiver_count.set(cols)
 
-        self.pola_zyskow = [
-            [tk.StringVar(value="0") for _ in range(kolumny)] for _ in range(wiersze)
-        ]
-        self.pola_blokad = [
-            [tk.BooleanVar(value=False) for _ in range(kolumny)] for _ in range(wiersze)
-        ]
-        self.pola_podazy = [tk.StringVar(value="0") for _ in range(wiersze)]
-        self.pola_popytu = [tk.StringVar(value="0") for _ in range(kolumny)]
+        if not keep_names or len(self.supplier_names) != rows:
+            self.supplier_names = [f"D{i + 1}" for i in range(rows)]
+        if not keep_names or len(self.receiver_names) != cols:
+            self.receiver_names = [f"O{j + 1}" for j in range(cols)]
 
-        if resetuj_nazwy or len(self.nazwy_dostawcow) != wiersze:
-            self.nazwy_dostawcow = [f"D{i + 1}" for i in range(wiersze)]
-        if resetuj_nazwy or len(self.nazwy_odbiorcow) != kolumny:
-            self.nazwy_odbiorcow = [f"O{j + 1}" for j in range(kolumny)]
+        self.value_vars = [[tk.StringVar(value="0") for _ in range(cols)] for _ in range(rows)]
+        self.block_vars = [[tk.BooleanVar(value=False) for _ in range(cols)] for _ in range(rows)]
+        self.supply_vars = [tk.StringVar(value="0") for _ in range(rows)]
+        self.demand_vars = [tk.StringVar(value="0") for _ in range(cols)]
 
-        ttk.Label(self.ramka_danych, text="").grid(row=0, column=0, padx=4, pady=4)
-        for j in range(kolumny):
-            ttk.Label(self.ramka_danych, text=self.nazwy_odbiorcow[j]).grid(
-                row=0, column=j + 1, padx=4, pady=4
+        ttk.Label(self.input_frame, text="").grid(row=0, column=0, padx=4, pady=4)
+        for j, name in enumerate(self.receiver_names):
+            ttk.Label(self.input_frame, text=name).grid(row=0, column=j + 1, padx=4, pady=4)
+        ttk.Label(self.input_frame, text="Podaz").grid(row=0, column=cols + 1, padx=4, pady=4)
+
+        for i, name in enumerate(self.supplier_names):
+            ttk.Label(self.input_frame, text=name).grid(row=i + 1, column=0, padx=4, pady=4)
+            for j in range(cols):
+                cell = ttk.Frame(self.input_frame, relief="solid", borderwidth=1, padding=4)
+                cell.grid(row=i + 1, column=j + 1, padx=3, pady=3)
+
+                ttk.Entry(cell, width=8, justify="center", textvariable=self.value_vars[i][j]).pack()
+                ttk.Checkbutton(cell, text="Blokada", variable=self.block_vars[i][j]).pack()
+
+            ttk.Entry(self.input_frame, width=10, justify="center", textvariable=self.supply_vars[i]).grid(
+                row=i + 1, column=cols + 1, padx=4, pady=4
             )
-        ttk.Label(self.ramka_danych, text="Podaz").grid(
-            row=0, column=kolumny + 1, padx=4, pady=4
-        )
 
-        for i in range(wiersze):
-            ttk.Label(self.ramka_danych, text=self.nazwy_dostawcow[i]).grid(
-                row=i + 1, column=0, padx=4, pady=4
+        ttk.Label(self.input_frame, text="Popyt").grid(row=rows + 1, column=0, padx=4, pady=4)
+        for j in range(cols):
+            ttk.Entry(self.input_frame, width=10, justify="center", textvariable=self.demand_vars[j]).grid(
+                row=rows + 1, column=j + 1, padx=4, pady=4
             )
-            for j in range(kolumny):
-                ramka_komorki = ttk.Frame(
-                    self.ramka_danych, relief="solid", borderwidth=1, padding=4
-                )
-                ramka_komorki.grid(row=i + 1, column=j + 1, padx=3, pady=3)
 
-                ttk.Entry(
-                    ramka_komorki,
-                    width=8,
-                    justify="center",
-                    textvariable=self.pola_zyskow[i][j],
-                ).pack()
-                ttk.Checkbutton(
-                    ramka_komorki,
-                    text="Blokada",
-                    variable=self.pola_blokad[i][j],
-                ).pack()
+        self.clear_results()
 
-            ttk.Entry(
-                self.ramka_danych,
-                width=10,
-                justify="center",
-                textvariable=self.pola_podazy[i],
-            ).grid(row=i + 1, column=kolumny + 1, padx=4, pady=4)
+    def load_example(self):
+        self.supplier_count.set(2)
+        self.receiver_count.set(3)
+        self.build_input_table()
 
-        ttk.Label(self.ramka_danych, text="Popyt").grid(
-            row=wiersze + 1, column=0, padx=4, pady=4
-        )
-        for j in range(kolumny):
-            ttk.Entry(
-                self.ramka_danych,
-                width=10,
-                justify="center",
-                textvariable=self.pola_popytu[j],
-            ).grid(row=wiersze + 1, column=j + 1, padx=4, pady=4)
-
-        self.wyczysc_wyniki()
-
-    def wczytaj_przyklad(self):
-        self.liczba_dostawcow.set(2)
-        self.liczba_odbiorcow.set(3)
-        self.utworz_tabele()
-
-        przyklad_zyskow = [
+        values = [
             [8, 14, 17],
             [12, 9, 19],
         ]
-        przyklad_podazy = [20, 30]
-        przyklad_popytu = [10, 28, 29]
-        przyklad_blokad = [
+        supply = [20, 30]
+        demand = [10, 28, 29]
+        blocked = [
             [False, False, False],
             [False, False, False],
         ]
 
-        for i, podaz in enumerate(przyklad_podazy):
-            self.pola_podazy[i].set(str(podaz))
-            for j, zysk in enumerate(przyklad_zyskow[i]):
-                self.pola_zyskow[i][j].set(str(zysk))
-                self.pola_blokad[i][j].set(przyklad_blokad[i][j])
+        self.fill_input_table(values, supply, demand, blocked)
 
-        for j, popyt in enumerate(przyklad_popytu):
-            self.pola_popytu[j].set(str(popyt))
+    def fill_input_table(self, values, supply, demand, blocked):
+        for i in range(len(supply)):
+            self.supply_vars[i].set(str(supply[i]))
+            for j in range(len(demand)):
+                self.value_vars[i][j].set(str(values[i][j]))
+                self.block_vars[i][j].set(blocked[i][j])
 
-    def wpisz_dane_do_tabeli(self, zyski, podaz, popyt, blokady):
-        for i in range(len(podaz)):
-            self.pola_podazy[i].set(str(podaz[i]))
-            for j in range(len(popyt)):
-                self.pola_zyskow[i][j].set(str(zyski[i][j]))
-                self.pola_blokad[i][j].set(blokady[i][j])
+        for j in range(len(demand)):
+            self.demand_vars[j].set(str(demand[j]))
 
-        for j in range(len(popyt)):
-            self.pola_popytu[j].set(str(popyt[j]))
+    def read_data(self):
+        rows = self.supplier_count.get()
+        cols = self.receiver_count.get()
 
-    def zbilansuj_tabele(self):
-        try:
-            zyski, podaz, popyt, blokady, dostawcy, odbiorcy = self.pobierz_dane()
-        except ValueError as blad:
-            messagebox.showerror("Blad", str(blad))
-            return
-
-        suma_podazy = sum(podaz)
-        suma_popytu = sum(popyt)
-
-        if suma_podazy == suma_popytu:
-            messagebox.showinfo("Bilans", "Problem jest juz zbilansowany.")
-            return
-
-        if suma_podazy > suma_popytu:
-            if len(popyt) >= MAX_SIZE:
-                messagebox.showerror("Blad", "Nie mozna dodac fikcyjnego odbiorcy, bo jest juz 10 odbiorcow.")
-                return
-            roznica = suma_podazy - suma_popytu
-            for wiersz in zyski:
-                wiersz.append(0.0)
-            for wiersz in blokady:
-                wiersz.append(False)
-            popyt.append(roznica)
-            odbiorcy.append("OF")
-        else:
-            if len(podaz) >= MAX_SIZE:
-                messagebox.showerror("Blad", "Nie mozna dodac fikcyjnego dostawcy, bo jest juz 10 dostawcow.")
-                return
-            roznica = suma_popytu - suma_podazy
-            zyski.append([0.0] * len(popyt))
-            blokady.append([False] * len(popyt))
-            podaz.append(roznica)
-            dostawcy.append("DF")
-
-        self.nazwy_dostawcow = dostawcy
-        self.nazwy_odbiorcow = odbiorcy
-        self.liczba_dostawcow.set(len(dostawcy))
-        self.liczba_odbiorcow.set(len(odbiorcy))
-        self.utworz_tabele(resetuj_nazwy=False)
-        self.wpisz_dane_do_tabeli(zyski, podaz, popyt, blokady)
-        self.opis_wyniku.set("Tabela zostala zbilansowana. Mozesz teraz ustawic blokady i kliknac Oblicz.")
-
-    def pobierz_liczbe(self, tekst, nazwa):
-        tekst = tekst.strip().replace(",", ".")
-        if tekst == "":
-            raise ValueError(f"Pole {nazwa} nie moze byc puste.")
-        try:
-            liczba = float(tekst)
-        except ValueError as blad:
-            raise ValueError(f"Pole {nazwa} musi byc liczba.") from blad
-        if liczba < 0:
-            raise ValueError(f"Pole {nazwa} nie moze byc ujemne.")
-        return liczba
-
-    def pobierz_dane(self):
-        wiersze = self.liczba_dostawcow.get()
-        kolumny = self.liczba_odbiorcow.get()
-
-        zyski = [
+        values = [
             [
-                self.pobierz_liczbe(self.pola_zyskow[i][j].get(), f"D{i + 1}-O{j + 1}")
-                for j in range(kolumny)
+                parse_number(
+                    self.value_vars[i][j].get(),
+                    f"{self.supplier_names[i]}-{self.receiver_names[j]}",
+                    allow_negative=True,
+                )
+                for j in range(cols)
             ]
-            for i in range(wiersze)
+            for i in range(rows)
         ]
-        blokady = [
-            [self.pola_blokad[i][j].get() for j in range(kolumny)]
-            for i in range(wiersze)
+        blocked = [
+            [self.block_vars[i][j].get() for j in range(cols)]
+            for i in range(rows)
         ]
-        podaz = [
-            self.pobierz_liczbe(self.pola_podazy[i].get(), f"podaz D{i + 1}")
-            for i in range(wiersze)
+        supply = [
+            parse_number(self.supply_vars[i].get(), f"podaz {self.supplier_names[i]}")
+            for i in range(rows)
         ]
-        popyt = [
-            self.pobierz_liczbe(self.pola_popytu[j].get(), f"popyt O{j + 1}")
-            for j in range(kolumny)
+        demand = [
+            parse_number(self.demand_vars[j].get(), f"popyt {self.receiver_names[j]}")
+            for j in range(cols)
         ]
-        dostawcy = self.nazwy_dostawcow[:]
-        odbiorcy = self.nazwy_odbiorcow[:]
 
-        return zyski, podaz, popyt, blokady, dostawcy, odbiorcy
+        return values, supply, demand, blocked, self.supplier_names[:], self.receiver_names[:]
 
-    def wyczysc_wyniki(self):
-        for widget in self.ramka_wynikow.winfo_children():
-            widget.destroy()
-        self.opis_wyniku.set("Wpisz dane i kliknij Oblicz.")
-
-    def oblicz(self):
+    def balance_input_table(self):
         try:
-            dane = self.pobierz_dane()
-            wynik = rozwiaz_metoda_maksymalnego_elementu(*dane)
-        except ValueError as blad:
-            messagebox.showerror("Blad", str(blad))
-            return
-        except Exception as blad:
-            messagebox.showerror("Blad", f"Wystapil nieoczekiwany blad:\n{blad}")
+            data = self.read_data()
+            values, supply, demand, blocked, suppliers, receivers, note = balance_data(*data)
+        except ValueError as error:
+            messagebox.showerror("Blad", str(error))
             return
 
-        self.pokaz_wyniki(wynik)
+        if len(suppliers) > MAX_SIZE or len(receivers) > MAX_SIZE:
+            messagebox.showerror("Blad", "Po zbilansowaniu tabela przekroczylaby limit 10 x 10.")
+            return
 
-    def pokaz_wyniki(self, wynik):
-        self.wyczysc_wyniki()
-        self.opis_wyniku.set(
-            f"Wynik koncowy: {wynik['wynik']:.2f} | "
-            f"Liczba iteracji: {len(wynik['iteracje'])} | "
-            f"{wynik['komunikat_bilansu']}"
+        if note == "Problem byl juz zbilansowany.":
+            messagebox.showinfo("Bilans", note)
+            return
+
+        self.supplier_names = suppliers
+        self.receiver_names = receivers
+        self.supplier_count.set(len(suppliers))
+        self.receiver_count.set(len(receivers))
+        self.build_input_table(keep_names=True)
+        self.fill_input_table(values, supply, demand, blocked)
+        self.summary_text.set("Tabela zostala zbilansowana. Mozesz teraz ustawic blokady i kliknac Oblicz.")
+
+    def clear_results(self):
+        for widget in self.result_frame.winfo_children():
+            widget.destroy()
+        self.summary_text.set("Wprowadz dane i kliknij Oblicz.")
+
+    def calculate(self):
+        try:
+            result = solve_max_element_method(*self.read_data())
+        except ValueError as error:
+            messagebox.showerror("Blad danych", str(error))
+            return
+        except Exception as error:
+            messagebox.showerror("Blad", f"Wystapil nieoczekiwany blad:\n{error}")
+            return
+
+        self.show_result(result)
+
+    def show_result(self, result):
+        self.clear_results()
+        self.summary_text.set(
+            f"Wynik koncowy: {result['total']:.2f} | "
+            f"Liczba iteracji: {len(result['iterations'])} | "
+            f"{result['balance_note']}"
         )
 
-        ramka = ttk.LabelFrame(self.ramka_wynikow, text="Tabela koncowa", padding=8)
-        ramka.pack(fill="x", pady=5)
-        self.rysuj_tabele(
-            ramka,
-            wynik["dostawcy"],
-            wynik["odbiorcy"],
-            wynik["alokacja"],
-            wynik["zyski"],
-            wynik["blokady"],
-            [0] * len(wynik["dostawcy"]),
-            [0] * len(wynik["odbiorcy"]),
+        final_box = ttk.LabelFrame(self.result_frame, text="Tabela koncowa", padding=8)
+        final_box.pack(fill="x", pady=5)
+        self.draw_table(
+            final_box,
+            result,
+            result["allocation"],
+            [0.0] * len(result["suppliers"]),
+            [0.0] * len(result["receivers"]),
         )
 
-        for iteracja in wynik["iteracje"]:
-            ramka_iteracji = ttk.LabelFrame(
-                self.ramka_wynikow,
-                text=f"Iteracja {iteracja['nr']}",
-                padding=8,
-            )
-            ramka_iteracji.pack(fill="x", pady=5)
+        for step in result["iterations"]:
+            box = ttk.LabelFrame(self.result_frame, text=f"Iteracja {step['number']}", padding=8)
+            box.pack(fill="x", pady=5)
 
-            opis = (
-                f"Wybrano trase {wynik['dostawcy'][iteracja['wiersz']]} -> "
-                f"{wynik['odbiorcy'][iteracja['kolumna']]}, "
-                f"wartosc = {iteracja['wartosc']}, przydzial = {iteracja['przydzial']}."
+            text = (
+                f"Wybrano trase {result['suppliers'][step['row']]} -> "
+                f"{result['receivers'][step['col']]}, "
+                f"wartosc = {step['value']}, przydzial = {step['amount']}."
             )
-            ttk.Label(ramka_iteracji, text=opis).pack(anchor="w", pady=(0, 5))
-
-            self.rysuj_tabele(
-                ramka_iteracji,
-                wynik["dostawcy"],
-                wynik["odbiorcy"],
-                iteracja["alokacja"],
-                wynik["zyski"],
-                wynik["blokady"],
-                iteracja["podaz"],
-                iteracja["popyt"],
-                (iteracja["wiersz"], iteracja["kolumna"]),
+            ttk.Label(box, text=text).pack(anchor="w", pady=(0, 5))
+            self.draw_table(
+                box,
+                result,
+                step["allocation"],
+                step["supply"],
+                step["demand"],
+                (step["row"], step["col"]),
             )
 
-    def rysuj_tabele(
-        self,
-        rodzic,
-        dostawcy,
-        odbiorcy,
-        alokacja,
-        zyski,
-        blokady,
-        podaz,
-        popyt,
-        zaznaczenie=None,
-    ):
-        tabela = ttk.Frame(rodzic)
-        tabela.pack(anchor="w")
+    def draw_table(self, parent, result, allocation, supply, demand, selected=None):
+        table = ttk.Frame(parent)
+        table.pack(anchor="w")
 
-        ttk.Label(tabela, text="").grid(row=0, column=0, padx=3, pady=3)
-        for j, nazwa in enumerate(odbiorcy):
-            ttk.Label(tabela, text=nazwa).grid(row=0, column=j + 1, padx=3, pady=3)
-        ttk.Label(tabela, text="Pozostala podaz").grid(
-            row=0, column=len(odbiorcy) + 1, padx=3, pady=3
+        ttk.Label(table, text="").grid(row=0, column=0, padx=3, pady=3)
+        for j, name in enumerate(result["receivers"]):
+            ttk.Label(table, text=name).grid(row=0, column=j + 1, padx=3, pady=3)
+        ttk.Label(table, text="Pozostala podaz").grid(
+            row=0, column=len(result["receivers"]) + 1, padx=3, pady=3
         )
 
-        for i, nazwa in enumerate(dostawcy):
-            ttk.Label(tabela, text=nazwa).grid(row=i + 1, column=0, padx=3, pady=3)
-            for j in range(len(odbiorcy)):
-                tekst = f"a={alokacja[i][j]:.2f}\nz={zyski[i][j]:.2f}"
-                if blokady[i][j] and alokacja[i][j] == 0:
-                    tekst = f"X\nz={zyski[i][j]:.2f}"
+        for i, name in enumerate(result["suppliers"]):
+            ttk.Label(table, text=name).grid(row=i + 1, column=0, padx=3, pady=3)
+            for j in range(len(result["receivers"])):
+                text = f"a={allocation[i][j]:.2f}\nz={result['values'][i][j]:.2f}"
 
-                if zaznaczenie == (i, j):
-                    kolor = "#bfe3b4"
-                elif blokady[i][j] and alokacja[i][j] == 0:
-                    kolor = "#f3c7c7"
+                if selected == (i, j):
+                    color = "#bfe3b4"
+                elif result["blocked"][i][j] and allocation[i][j] == 0:
+                    text = f"X\nz={result['values'][i][j]:.2f}"
+                    color = "#f3c7c7"
                 else:
-                    kolor = "#e3ddd5"
+                    color = "#e3ddd5"
 
                 tk.Label(
-                    tabela,
-                    text=tekst,
+                    table,
+                    text=text,
                     width=12,
                     height=3,
                     relief="solid",
-                    bg=kolor,
+                    bg=color,
                     fg="#1f1f1f",
                     font=("TkDefaultFont", 11),
                 ).grid(row=i + 1, column=j + 1, padx=2, pady=2)
 
-            ttk.Label(tabela, text=f"{podaz[i]:.2f}").grid(
-                row=i + 1,
-                column=len(odbiorcy) + 1,
-                padx=3,
-                pady=3,
+            ttk.Label(table, text=f"{supply[i]:.2f}").grid(
+                row=i + 1, column=len(result["receivers"]) + 1, padx=3, pady=3
             )
 
-        ttk.Label(tabela, text="Pozostaly popyt").grid(
-            row=len(dostawcy) + 1,
-            column=0,
-            padx=3,
-            pady=3,
-        )
-        for j in range(len(odbiorcy)):
-            ttk.Label(tabela, text=f"{popyt[j]:.2f}").grid(
-                row=len(dostawcy) + 1,
-                column=j + 1,
-                padx=3,
-                pady=3,
-            )
+        bottom_row = len(result["suppliers"]) + 1
+        ttk.Label(table, text="Pozostaly popyt").grid(row=bottom_row, column=0, padx=3, pady=3)
+        for j in range(len(result["receivers"])):
+            ttk.Label(table, text=f"{demand[j]:.2f}").grid(row=bottom_row, column=j + 1, padx=3, pady=3)
 
 
 def main():
     root = tk.Tk()
-    AplikacjaTransportowa(root)
+    TransportApp(root)
     root.mainloop()
 
 
