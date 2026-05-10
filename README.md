@@ -8,14 +8,14 @@ Aplikacja w Pythonie (`Tkinter`) liczaca problem transportowy metoda maksymalneg
 - wpisywanie kosztow transportu, kosztow zakupu u dostawcow i cen sprzedazy u odbiorcow,
 - liczenie zysku jednostkowego jako `cena sprzedazy - koszt zakupu - koszt transportu`,
 - blokowanie wybranych tras,
+- blokowanie tras fikcyjnego dostawcy `FD` i fikcyjnego odbiorcy `FO` przed bilansowaniem,
 - bilansowanie przez fikcyjnego dostawce `FD` i fikcyjnego odbiorce `FO`,
-- przycisk `Zbilansuj`, ktory pokazuje `FD/FO` przed obliczeniami,
 - tabela koncowa i tabela dla kazdej iteracji.
 
 ## Uruchomienie
 
 ```bash
-/opt/homebrew/bin/python3.13 app.py
+python3.13 app.py
 ```
 
 ## Algorytm
