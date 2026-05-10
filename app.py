@@ -596,7 +596,21 @@ class TransportApp:
 
         final_box = ttk.LabelFrame(self.result_frame, text="Tabela koncowa", padding=8)
         final_box.pack(fill="x", pady=5)
-        self.draw_table(final_box, result, result["allocation"], [0.0] * len(result["suppliers"]), [0.0] * len(result["receivers"]), show_duals=True)
+        changes = self.get_final_changes(result)
+        if changes:
+            ttk.Label(
+                final_box,
+                text="Zielony = przydzial zwiekszony po poprawce, pomaranczowy = przydzial zmniejszony po poprawce.",
+            ).pack(anchor="w", pady=(0, 5))
+        self.draw_table(
+            final_box,
+            result,
+            result["allocation"],
+            [0.0] * len(result["suppliers"]),
+            [0.0] * len(result["receivers"]),
+            show_duals=True,
+            changes=changes,
+        )
         self.draw_economic_summary(result)
 
         for step in result["iterations"]:
@@ -611,6 +625,22 @@ class TransportApp:
             ).pack(anchor="w", pady=(0, 5))
             self.draw_table(box, result, step["allocation"], step["supply"], step["demand"], (step["row"], step["col"]))
 
+    def get_final_changes(self, result):
+        if not result["iterations"]:
+            return {}
+
+        before = result["iterations"][-1]["allocation"]
+        after = result["allocation"]
+        changes = {}
+        for i in range(len(after)):
+            for j in range(len(after[i])):
+                difference = after[i][j] - before[i][j]
+                if difference > EPS:
+                    changes[(i, j)] = "up"
+                elif difference < -EPS:
+                    changes[(i, j)] = "down"
+        return changes
+
     def draw_economic_summary(self, result):
         box = ttk.LabelFrame(self.result_frame, text="Podsumowanie ekonomiczne", padding=8)
         box.pack(fill="x", pady=5)
@@ -621,7 +651,8 @@ class TransportApp:
         ):
             ttk.Label(box, text=f"{label}: {format_number(result['economic_summary'][key])}").pack(anchor="w")
 
-    def draw_table(self, parent, result, allocation, supply, demand, selected=None, show_duals=False):
+    def draw_table(self, parent, result, allocation, supply, demand, selected=None, show_duals=False, changes=None):
+        changes = changes or {}
         table = ttk.Frame(parent)
         table.pack(anchor="w")
         alpha, beta = (calculate_dual_variables(result["values"], allocation) if show_duals else ([], []))
@@ -639,6 +670,10 @@ class TransportApp:
                 color = "#e3ddd5"
                 if selected == (i, j):
                     color = "#bfe3b4"
+                elif changes.get((i, j)) == "up":
+                    color = "#bfe3b4"
+                elif changes.get((i, j)) == "down":
+                    color = "#ffd49a"
                 elif result["blocked"][i][j] and allocation[i][j] <= EPS:
                     text = f"X\nz={format_number(result['values'][i][j])}"
                     color = "#f3c7c7"
