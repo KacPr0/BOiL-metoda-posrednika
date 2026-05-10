@@ -10,6 +10,19 @@ def copy_matrix(matrix):
     return [row[:] for row in matrix]
 
 
+def calculate_unit_profits(transport_costs, purchase_costs, sale_prices, suppliers, receivers):
+    profits = []
+    for i, supplier in enumerate(suppliers):
+        row = []
+        for j, receiver in enumerate(receivers):
+            if supplier == "FD" or receiver == "FO":
+                row.append(0.0)
+            else:
+                row.append(sale_prices[j] - purchase_costs[i] - transport_costs[i][j])
+        profits.append(row)
+    return profits
+
+
 def parse_number(text, field_name, allow_negative=False):
     text = text.strip().replace(",", ".")
     if text == "":
@@ -26,6 +39,24 @@ def parse_number(text, field_name, allow_negative=False):
     return value
 
 
+def format_number(value):
+    if abs(value) < EPS:
+        value = 0.0
+    if abs(value - round(value)) < EPS:
+        return str(int(round(value)))
+    return f"{value:.2f}"
+
+
+def route_priority(supplier, receiver):
+    if supplier != "FD" and receiver != "FO":
+        return 3
+    if supplier != "FD" and receiver == "FO":
+        return 2
+    if supplier == "FD" and receiver != "FO":
+        return 1
+    return 0
+
+
 def balance_data(values, supply, demand, blocked, suppliers, receivers):
     values = copy_matrix(values)
     blocked = copy_matrix(blocked)
@@ -40,22 +71,19 @@ def balance_data(values, supply, demand, blocked, suppliers, receivers):
     if abs(supply_sum - demand_sum) < EPS:
         return values, supply, demand, blocked, suppliers, receivers, "Problem byl juz zbilansowany."
 
-    if supply_sum > demand_sum:
-        diff = supply_sum - demand_sum
-        for row in values:
-            row.append(0.0)
-        for row in blocked:
-            row.append(False)
-        demand.append(diff)
-        receivers.append("OF")
-        return values, supply, demand, blocked, suppliers, receivers, "Dodano fikcyjnego odbiorce OF."
+    for row in values:
+        row.append(0.0)
+    for row in blocked:
+        row.append(False)
+    demand.append(supply_sum)
+    receivers.append("FO")
 
-    diff = demand_sum - supply_sum
     values.append([0.0] * len(demand))
     blocked.append([False] * len(demand))
-    supply.append(diff)
-    suppliers.append("DF")
-    return values, supply, demand, blocked, suppliers, receivers, "Dodano fikcyjnego dostawce DF."
+    supply.append(demand_sum)
+    suppliers.append("FD")
+
+    return values, supply, demand, blocked, suppliers, receivers, "Dodano fikcyjnego dostawce FD i odbiorce FO."
 
 
 def can_finish_plan(supply, demand, blocked):
@@ -140,7 +168,15 @@ def solve_max_element_method(values, supply, demand, blocked, suppliers, receive
                 if demand[j] <= EPS or blocked[i][j]:
                     continue
                 amount = min(supply[i], demand[j])
-                candidates.append((values[i][j], amount, i, j))
+                candidates.append(
+                    (
+                        values[i][j],
+                        route_priority(suppliers[i], receivers[j]),
+                        amount,
+                        i,
+                        j,
+                    )
+                )
 
         if not candidates:
             raise ValueError("Brak dostepnej trasy do dalszego przydzialu.")
@@ -148,7 +184,7 @@ def solve_max_element_method(values, supply, demand, blocked, suppliers, receive
         candidates.sort(reverse=True)
         chosen = None
 
-        for value, amount, i, j in candidates:
+        for value, priority, amount, i, j in candidates:
             test_supply = supply[:]
             test_demand = demand[:]
             test_supply[i] -= amount
@@ -215,6 +251,8 @@ class TransportApp:
         self.block_vars = []
         self.supply_vars = []
         self.demand_vars = []
+        self.purchase_cost_vars = []
+        self.sale_price_vars = []
         self.supplier_names = []
         self.receiver_names = []
 
@@ -244,12 +282,6 @@ class TransportApp:
         ttk.Button(top, text="Przyklad", command=self.load_example).pack(side="left", padx=5)
         ttk.Button(top, text="Zbilansuj", command=self.balance_input_table).pack(side="left", padx=5)
         ttk.Button(top, text="Oblicz", command=self.calculate).pack(side="left", padx=5)
-
-        ttk.Label(
-            self.root,
-            text="W komorce wpisujesz wartosc. Zaznaczenie pola 'Blokada' oznacza zakaz transportu na tej trasie.",
-            padding=(10, 0),
-        ).pack(anchor="w")
 
         self.input_frame = ttk.Frame(self.root, padding=10)
         self.input_frame.pack(fill="x")
@@ -308,11 +340,16 @@ class TransportApp:
         self.block_vars = [[tk.BooleanVar(value=False) for _ in range(cols)] for _ in range(rows)]
         self.supply_vars = [tk.StringVar(value="0") for _ in range(rows)]
         self.demand_vars = [tk.StringVar(value="0") for _ in range(cols)]
+        self.purchase_cost_vars = [tk.StringVar(value="0") for _ in range(rows)]
+        self.sale_price_vars = [tk.StringVar(value="0") for _ in range(cols)]
 
         ttk.Label(self.input_frame, text="").grid(row=0, column=0, padx=4, pady=4)
         for j, name in enumerate(self.receiver_names):
             ttk.Label(self.input_frame, text=name).grid(row=0, column=j + 1, padx=4, pady=4)
         ttk.Label(self.input_frame, text="Podaz").grid(row=0, column=cols + 1, padx=4, pady=4)
+        ttk.Label(self.input_frame, text="Koszty zakupu u dostawcy").grid(
+            row=0, column=cols + 2, padx=4, pady=4
+        )
 
         for i, name in enumerate(self.supplier_names):
             ttk.Label(self.input_frame, text=name).grid(row=i + 1, column=0, padx=4, pady=4)
@@ -326,11 +363,25 @@ class TransportApp:
             ttk.Entry(self.input_frame, width=10, justify="center", textvariable=self.supply_vars[i]).grid(
                 row=i + 1, column=cols + 1, padx=4, pady=4
             )
+            ttk.Entry(
+                self.input_frame,
+                width=18,
+                justify="center",
+                textvariable=self.purchase_cost_vars[i],
+            ).grid(row=i + 1, column=cols + 2, padx=4, pady=4)
 
         ttk.Label(self.input_frame, text="Popyt").grid(row=rows + 1, column=0, padx=4, pady=4)
         for j in range(cols):
             ttk.Entry(self.input_frame, width=10, justify="center", textvariable=self.demand_vars[j]).grid(
                 row=rows + 1, column=j + 1, padx=4, pady=4
+            )
+
+        ttk.Label(self.input_frame, text="Cena sprzedazy u odbiorcy").grid(
+            row=rows + 2, column=0, padx=4, pady=4
+        )
+        for j in range(cols):
+            ttk.Entry(self.input_frame, width=10, justify="center", textvariable=self.sale_price_vars[j]).grid(
+                row=rows + 2, column=j + 1, padx=4, pady=4
             )
 
         self.clear_results()
@@ -340,39 +391,42 @@ class TransportApp:
         self.receiver_count.set(3)
         self.build_input_table()
 
-        values = [
+        transport_costs = [
             [8, 14, 17],
             [12, 9, 19],
         ]
         supply = [20, 30]
-        demand = [10, 28, 29]
+        purchase_costs = [10, 12]
+        demand = [10, 28, 27]
+        sale_prices = [30, 25, 30]
         blocked = [
             [False, False, False],
             [False, False, False],
         ]
 
-        self.fill_input_table(values, supply, demand, blocked)
+        self.fill_input_table(transport_costs, supply, demand, blocked, purchase_costs, sale_prices)
 
-    def fill_input_table(self, values, supply, demand, blocked):
+    def fill_input_table(self, transport_costs, supply, demand, blocked, purchase_costs, sale_prices):
         for i in range(len(supply)):
             self.supply_vars[i].set(str(supply[i]))
+            self.purchase_cost_vars[i].set(str(purchase_costs[i]))
             for j in range(len(demand)):
-                self.value_vars[i][j].set(str(values[i][j]))
+                self.value_vars[i][j].set(str(transport_costs[i][j]))
                 self.block_vars[i][j].set(blocked[i][j])
 
         for j in range(len(demand)):
             self.demand_vars[j].set(str(demand[j]))
+            self.sale_price_vars[j].set(str(sale_prices[j]))
 
-    def read_data(self):
+    def read_input_data(self):
         rows = self.supplier_count.get()
         cols = self.receiver_count.get()
 
-        values = [
+        transport_costs = [
             [
                 parse_number(
                     self.value_vars[i][j].get(),
-                    f"{self.supplier_names[i]}-{self.receiver_names[j]}",
-                    allow_negative=True,
+                    f"koszt transportu {self.supplier_names[i]}-{self.receiver_names[j]}",
                 )
                 for j in range(cols)
             ]
@@ -390,23 +444,81 @@ class TransportApp:
             parse_number(self.demand_vars[j].get(), f"popyt {self.receiver_names[j]}")
             for j in range(cols)
         ]
+        purchase_costs = [
+            parse_number(self.purchase_cost_vars[i].get(), f"koszt zakupu {self.supplier_names[i]}")
+            for i in range(rows)
+        ]
+        sale_prices = [
+            parse_number(self.sale_price_vars[j].get(), f"cena sprzedazy {self.receiver_names[j]}")
+            for j in range(cols)
+        ]
 
-        return values, supply, demand, blocked, self.supplier_names[:], self.receiver_names[:]
+        return (
+            transport_costs,
+            supply,
+            demand,
+            blocked,
+            purchase_costs,
+            sale_prices,
+            self.supplier_names[:],
+            self.receiver_names[:],
+        )
+
+    def read_data(self):
+        (
+            transport_costs,
+            supply,
+            demand,
+            blocked,
+            purchase_costs,
+            sale_prices,
+            suppliers,
+            receivers,
+        ) = self.read_input_data()
+        values = calculate_unit_profits(transport_costs, purchase_costs, sale_prices, suppliers, receivers)
+
+        return values, supply, demand, blocked, suppliers, receivers
 
     def balance_input_table(self):
         try:
-            data = self.read_data()
-            values, supply, demand, blocked, suppliers, receivers, note = balance_data(*data)
+            (
+                transport_costs,
+                supply,
+                demand,
+                blocked,
+                purchase_costs,
+                sale_prices,
+                suppliers,
+                receivers,
+            ) = self.read_input_data()
         except ValueError as error:
             messagebox.showerror("Blad", str(error))
             return
 
-        if len(suppliers) > MAX_SIZE or len(receivers) > MAX_SIZE:
-            messagebox.showerror("Blad", "Po zbilansowaniu tabela przekroczylaby limit 10 x 10.")
+        supply_sum = sum(supply)
+        demand_sum = sum(demand)
+
+        if abs(supply_sum - demand_sum) < EPS:
+            messagebox.showinfo("Bilans", "Problem byl juz zbilansowany.")
             return
 
-        if note == "Problem byl juz zbilansowany.":
-            messagebox.showinfo("Bilans", note)
+        for row in transport_costs:
+            row.append(0.0)
+        for row in blocked:
+            row.append(False)
+        demand.append(supply_sum)
+        sale_prices.append(0.0)
+        receivers.append("FO")
+
+        transport_costs.append([0.0] * len(demand))
+        blocked.append([False] * len(demand))
+        supply.append(demand_sum)
+        purchase_costs.append(0.0)
+        suppliers.append("FD")
+        note = "Dodano fikcyjnego dostawce FD i odbiorce FO."
+
+        if len(suppliers) > MAX_SIZE or len(receivers) > MAX_SIZE:
+            messagebox.showerror("Blad", "Po zbilansowaniu tabela przekroczylaby limit 10 x 10.")
             return
 
         self.supplier_names = suppliers
@@ -414,8 +526,8 @@ class TransportApp:
         self.supplier_count.set(len(suppliers))
         self.receiver_count.set(len(receivers))
         self.build_input_table(keep_names=True)
-        self.fill_input_table(values, supply, demand, blocked)
-        self.summary_text.set("Tabela zostala zbilansowana. Mozesz teraz ustawic blokady i kliknac Oblicz.")
+        self.fill_input_table(transport_costs, supply, demand, blocked, purchase_costs, sale_prices)
+        self.summary_text.set(f"{note} Mozesz teraz ustawic blokady i kliknac Oblicz.")
 
     def clear_results(self):
         for widget in self.result_frame.winfo_children():
@@ -437,7 +549,7 @@ class TransportApp:
     def show_result(self, result):
         self.clear_results()
         self.summary_text.set(
-            f"Wynik koncowy: {result['total']:.2f} | "
+            f"Zysk calkowity: {result['total']:.2f} | "
             f"Liczba iteracji: {len(result['iterations'])} | "
             f"{result['balance_note']}"
         )
@@ -459,7 +571,7 @@ class TransportApp:
             text = (
                 f"Wybrano trase {result['suppliers'][step['row']]} -> "
                 f"{result['receivers'][step['col']]}, "
-                f"wartosc = {step['value']}, przydzial = {step['amount']}."
+                f"zysk jednostkowy = {step['value']}, przydzial = {step['amount']}."
             )
             ttk.Label(box, text=text).pack(anchor="w", pady=(0, 5))
             self.draw_table(
@@ -485,12 +597,13 @@ class TransportApp:
         for i, name in enumerate(result["suppliers"]):
             ttk.Label(table, text=name).grid(row=i + 1, column=0, padx=3, pady=3)
             for j in range(len(result["receivers"])):
-                text = f"a={allocation[i][j]:.2f}\nz={result['values'][i][j]:.2f}"
+                allocation_text = format_number(allocation[i][j]) if allocation[i][j] > EPS else "X"
+                text = f"a={allocation_text}\nz={format_number(result['values'][i][j])}"
 
                 if selected == (i, j):
                     color = "#bfe3b4"
-                elif result["blocked"][i][j] and allocation[i][j] == 0:
-                    text = f"X\nz={result['values'][i][j]:.2f}"
+                elif result["blocked"][i][j] and allocation[i][j] <= EPS:
+                    text = f"X\nz={format_number(result['values'][i][j])}"
                     color = "#f3c7c7"
                 else:
                     color = "#e3ddd5"
@@ -506,14 +619,16 @@ class TransportApp:
                     font=("TkDefaultFont", 11),
                 ).grid(row=i + 1, column=j + 1, padx=2, pady=2)
 
-            ttk.Label(table, text=f"{supply[i]:.2f}").grid(
+            ttk.Label(table, text=format_number(supply[i])).grid(
                 row=i + 1, column=len(result["receivers"]) + 1, padx=3, pady=3
             )
 
         bottom_row = len(result["suppliers"]) + 1
         ttk.Label(table, text="Pozostaly popyt").grid(row=bottom_row, column=0, padx=3, pady=3)
         for j in range(len(result["receivers"])):
-            ttk.Label(table, text=f"{demand[j]:.2f}").grid(row=bottom_row, column=j + 1, padx=3, pady=3)
+            ttk.Label(table, text=format_number(demand[j])).grid(
+                row=bottom_row, column=j + 1, padx=3, pady=3
+            )
 
 
 def main():

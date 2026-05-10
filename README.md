@@ -5,9 +5,11 @@ Aplikacja w Pythonie (`Tkinter`) liczaca problem transportowy metoda maksymalneg
 ## Funkcje
 
 - maksymalnie 10 dostawcow i 10 odbiorcow,
+- wpisywanie kosztow transportu, kosztow zakupu u dostawcow i cen sprzedazy u odbiorcow,
+- liczenie zysku jednostkowego jako `cena sprzedazy - koszt zakupu - koszt transportu`,
 - blokowanie wybranych tras,
-- bilansowanie przez fikcyjnego dostawce `DF` albo fikcyjnego odbiorce `OF`,
-- przycisk `Zbilansuj`, ktory pokazuje `DF/OF` przed obliczeniami,
+- bilansowanie przez fikcyjnego dostawce `FD` i fikcyjnego odbiorce `FO`,
+- przycisk `Zbilansuj`, ktory pokazuje `FD/FO` przed obliczeniami,
 - tabela koncowa i tabela dla kazdej iteracji.
 
 ## Uruchomienie
@@ -20,6 +22,7 @@ Aplikacja w Pythonie (`Tkinter`) liczaca problem transportowy metoda maksymalneg
 
 1. Program sprawdza, czy suma podazy jest rowna sumie popytu.
 2. Jezeli nie, dodaje fikcyjnego dostawce albo odbiorce.
-3. W kazdej iteracji wybiera dostepna trase o najwiekszej wartosci.
-4. Przydziela `min(pozostala podaz, pozostaly popyt)`.
-5. Zapisuje stan po iteracji i pokazuje go w tabeli.
+3. Program liczy macierz zyskow jednostkowych.
+4. W kazdej iteracji wybiera dostepna trase o najwiekszym zysku jednostkowym.
+5. Przydziela `min(pozostala podaz, pozostaly popyt)`.
+6. Zapisuje stan po iteracji i pokazuje go w tabeli.
