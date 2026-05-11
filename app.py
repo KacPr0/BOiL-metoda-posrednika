@@ -6,10 +6,12 @@ MAX_SIZE = 10
 EPS = 0.000001
 
 
+# Tworzy niezalezna kopie dwuwymiarowej listy.
 def copy_matrix(matrix):
     return [row[:] for row in matrix]
 
 
+# Formatuje liczby do czytelnego wyswietlania w tabelach.
 def format_number(value):
     if abs(value) < EPS:
         value = 0.0
@@ -18,6 +20,7 @@ def format_number(value):
     return f"{value:.2f}"
 
 
+# Zamienia tekst z pola formularza na liczbe i sprawdza poprawnosc danych.
 def parse_number(text, field_name):
     text = text.strip().replace(",", ".")
     if not text:
@@ -31,6 +34,7 @@ def parse_number(text, field_name):
     return value
 
 
+# Wylicza zysk jednostkowy dla kazdej trasy dostawca-odbiorca.
 def calculate_unit_profits(transport_costs, purchase_costs, sale_prices, suppliers, receivers):
     return [
         [
@@ -41,6 +45,7 @@ def calculate_unit_profits(transport_costs, purchase_costs, sale_prices, supplie
     ]
 
 
+# Podsumowuje przychody oraz koszty wynikajace z koncowego planu transportu.
 def calculate_economic_summary(allocation, transport_costs, purchase_costs, sale_prices, suppliers, receivers):
     revenue = transport_cost = purchase_cost = 0.0
     for i, supplier in enumerate(suppliers):
@@ -63,6 +68,7 @@ def calculate_economic_summary(allocation, transport_costs, purchase_costs, sale
     }
 
 
+# Ustala priorytet tras pomocniczych przy wyborze kolejnego przydzialu.
 def route_priority(supplier, receiver):
     if supplier == "FD":
         return 2 + (receiver == "FO")
@@ -71,6 +77,7 @@ def route_priority(supplier, receiver):
     return 0
 
 
+# Bilansuje dane, dodajac fikcyjnego dostawce lub odbiorce gdy podaz i popyt sa rozne.
 def balance_data(values, supply, demand, blocked, suppliers, receivers):
     values = copy_matrix(values)
     blocked = copy_matrix(blocked)
@@ -96,6 +103,7 @@ def balance_data(values, supply, demand, blocked, suppliers, receivers):
     return values, supply, demand, blocked, suppliers, receivers
 
 
+# Sprawdza metoda przeplywu, czy przy aktualnych blokadach da sie domknac plan.
 def can_finish_plan(supply, demand, blocked):
     total_supply = sum(supply)
     total_demand = sum(demand)
@@ -150,6 +158,7 @@ def can_finish_plan(supply, demand, blocked):
         flow += pushed
 
 
+# Oblicza zmienne dualne alpha i beta dla aktualnej bazy przydzialow.
 def calculate_dual_variables(values, allocation):
     suppliers_count = len(values)
     receivers_count = len(values[0]) if values else 0
@@ -177,6 +186,7 @@ def calculate_dual_variables(values, allocation):
     return alpha, beta
 
 
+# Buduje tabele delt uzywana do oceny, czy plan mozna jeszcze poprawic.
 def calculate_delta_table(values, allocation, blocked):
     alpha, beta = calculate_dual_variables(values, allocation)
     deltas = []
@@ -193,6 +203,7 @@ def calculate_delta_table(values, allocation, blocked):
     return deltas
 
 
+# Szuka cyklu korekcyjnego po dodaniu nowej komorki bazowej do planu.
 def find_cycle(allocation, entering_row, entering_col):
     suppliers_count = len(allocation)
     receivers_count = len(allocation[0]) if allocation else 0
@@ -229,6 +240,7 @@ def find_cycle(allocation, entering_row, entering_col):
     return [(entering_row, entering_col)] + path
 
 
+# Poprawia plan transportowy metoda potencjalow, wykorzystujac dodatnie delty.
 def improve_plan_with_deltas(values, allocation, blocked):
     allocation = copy_matrix(allocation)
     steps = []
@@ -273,6 +285,7 @@ def improve_plan_with_deltas(values, allocation, blocked):
     return allocation, steps
 
 
+# Wyznacza plan startowy metoda maksymalnego elementu, a nastepnie go optymalizuje.
 def solve_max_element_method(values, supply, demand, blocked, suppliers, receivers):
     values, supply, demand, blocked, suppliers, receivers = balance_data(
         values, supply, demand, blocked, suppliers, receivers
@@ -349,6 +362,7 @@ def solve_max_element_method(values, supply, demand, blocked, suppliers, receive
 
 
 class TransportApp:
+    # Inicjalizuje glowne okno aplikacji, zmienne formularza i dane przykladowe.
     def __init__(self, root):
         self.root = root
         self.root.title("Problem transportowy - metoda maksymalnego elementu")
@@ -377,6 +391,7 @@ class TransportApp:
         self.build_input_table()
         self.load_example()
 
+    # Buduje podstawowy uklad okna: panel sterowania, formularz i obszar wynikow.
     def build_window(self):
         top = ttk.Frame(self.root, padding=10)
         top.pack(fill="x")
@@ -406,6 +421,7 @@ class TransportApp:
         self.result_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+    # Obsluguje przewijanie obszaru wynikow kolkiem myszy.
     def scroll_results(self, event):
         if getattr(event, "num", None) == 4:
             self.result_canvas.yview_scroll(-3, "units")
@@ -414,6 +430,7 @@ class TransportApp:
         elif event.delta:
             self.result_canvas.yview_scroll((-1 if event.delta > 0 else 1) * max(3, abs(event.delta) // 40), "units")
 
+    # Dodaje pojedyncze pole tekstowe do siatki formularza.
     def add_entry(self, parent, row, col, variable=None, width=10, disabled=False):
         entry = ttk.Entry(parent, width=width, justify="center", textvariable=variable)
         if disabled:
@@ -421,9 +438,11 @@ class TransportApp:
             entry.configure(state="disabled")
         entry.grid(row=row, column=col, padx=4, pady=4)
 
+    # Dodaje etykiete tekstowa do siatki formularza.
     def add_label(self, text, row, col):
         ttk.Label(self.input_frame, text=text).grid(row=row, column=col, padx=4, pady=4)
 
+    # Dodaje komorke kosztu z polem wartosci i checkboxem blokady trasy.
     def add_cell(self, row, col, variable=None, block_var=None, disabled=False):
         cell = ttk.Frame(self.input_frame, relief="solid", borderwidth=1, padding=4)
         cell.grid(row=row, column=col, padx=3, pady=3)
@@ -434,6 +453,7 @@ class TransportApp:
         entry.pack()
         ttk.Checkbutton(cell, text="Blokada", variable=block_var).pack()
 
+    # Tworzy lub odtwarza tabele danych wejsciowych dla podanej liczby dostawcow i odbiorcow.
     def build_input_table(self):
         for widget in self.input_frame.winfo_children():
             widget.destroy()
@@ -492,6 +512,7 @@ class TransportApp:
         self.add_entry(self.input_frame, display_rows + 2, cols + 1, disabled=True)
         self.clear_results()
 
+    # Wczytuje przykladowy zestaw danych do szybkiego testowania programu.
     def load_example(self):
         self.supplier_count.set(2)
         self.receiver_count.set(3)
@@ -505,6 +526,7 @@ class TransportApp:
             [30, 25, 30],
         )
 
+    # Uzupelnia pola formularza przekazanymi kosztami, podaza, popytem i blokadami.
     def fill_input_table(self, transport_costs, supply, demand, blocked, purchase_costs, sale_prices):
         for i, amount in enumerate(supply):
             self.supply_vars[i].set(str(amount))
@@ -516,9 +538,11 @@ class TransportApp:
             self.demand_vars[j].set(str(amount))
             self.sale_price_vars[j].set(str(sale_prices[j]))
 
+    # Odczytuje serie pol liczbowych i zwraca je jako liste wartosci float.
     def read_numbers(self, variables, names, text):
         return [parse_number(var.get(), f"{text} {names[i]}") for i, var in enumerate(variables)]
 
+    # Pobiera wszystkie dane wpisane przez uzytkownika w formularzu.
     def read_input_data(self):
         rows, cols = self.supplier_count.get(), self.receiver_count.get()
         transport_costs = [
@@ -535,6 +559,7 @@ class TransportApp:
         sale_prices = self.read_numbers(self.sale_price_vars, self.receiver_names, "cena sprzedazy")
         return transport_costs, supply, demand, blocked, purchase_costs, sale_prices, self.supplier_names[:], self.receiver_names[:]
 
+    # Bilansuje dane formularza z uwzglednieniem blokad dla fikcyjnych tras.
     def balance_input_data(self, transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers):
         supply_sum, demand_sum = sum(supply), sum(demand)
         if abs(supply_sum - demand_sum) < EPS:
@@ -557,11 +582,13 @@ class TransportApp:
         suppliers.append("FD")
         return transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers
 
+    # Czysci poprzednie wyniki i przywraca komunikat poczatkowy.
     def clear_results(self):
         for widget in self.result_frame.winfo_children():
             widget.destroy()
         self.summary_text.set("Wprowadz dane i kliknij Oblicz.")
 
+    # Uruchamia walidacje danych, obliczenia i wyswietlenie wynikow.
     def calculate(self):
         try:
             data = self.read_input_data()
@@ -583,6 +610,7 @@ class TransportApp:
 
         self.show_result(result)
 
+    # Renderuje wynik koncowy oraz kolejne iteracje w obszarze wynikow.
     def show_result(self, result):
         self.clear_results()
         self.summary_text.set(f"Zysk calkowity: {result['total']:.2f} | Liczba iteracji: {len(result['iterations'])}")
@@ -612,6 +640,7 @@ class TransportApp:
             ).pack(anchor="w", pady=(0, 5))
             self.draw_table(box, result, step["allocation"], step["supply"], step["demand"], (step["row"], step["col"]))
 
+    # Porownuje plan po metodzie delt z ostatnia iteracja planu startowego.
     def get_final_changes(self, result):
         if not result["iterations"]:
             return {}
@@ -624,6 +653,7 @@ class TransportApp:
             if abs(after[i][j] - before[i][j]) > EPS
         }
 
+    # Wyswietla przychod, koszt transportu i koszt zakupu dla planu koncowego.
     def draw_economic_summary(self, result):
         box = ttk.LabelFrame(self.result_frame, text="Podsumowanie ekonomiczne", padding=8)
         box.pack(fill="x", pady=5)
@@ -634,6 +664,7 @@ class TransportApp:
         ):
             ttk.Label(box, text=f"{label}: {format_number(result['economic_summary'][key])}").pack(anchor="w")
 
+    # Rysuje tabele przydzialow, zyskow jednostkowych oraz opcjonalnie zmiennych dualnych.
     def draw_table(self, parent, result, allocation, supply, demand, selected=None, show_duals=False, changes=None):
         changes = changes or {}
         table = ttk.Frame(parent)
@@ -674,6 +705,7 @@ class TransportApp:
             ttk.Label(table, text=format_number(value)).grid(row=bottom_row, column=j + 1, padx=3, pady=3)
 
 
+# Startuje aplikacje Tkinter.
 def main():
     root = tk.Tk()
     TransportApp(root)
