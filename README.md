@@ -10,7 +10,8 @@ Aplikacja w Pythonie (`Tkinter`) liczaca problem transportowy metoda maksymalneg
 - blokowanie wybranych tras,
 - blokowanie tras fikcyjnego dostawcy `FD` i fikcyjnego odbiorcy `FO` przed bilansowaniem,
 - bilansowanie przez fikcyjnego dostawce `FD` i fikcyjnego odbiorce `FO`,
-- tabela koncowa i tabela dla kazdej iteracji.
+- tabela koncowa i tabela dla kazdej iteracji,
+- wyswietlanie tabel delt oraz informacji, czy plan jest optymalny.
 
 ## Uruchomienie
 
@@ -26,3 +27,5 @@ python3.13 app.py
 4. W kazdej iteracji wybiera dostepna trase o najwiekszym zysku jednostkowym.
 5. Przydziela `min(pozostala podaz, pozostaly popyt)`.
 6. Zapisuje stan po iteracji i pokazuje go w tabeli.
+7. Po planie startowym liczy delty `delta = z - alpha - beta`.
+8. Jezeli istnieje dodatnia delta, poprawia plan i ponownie liczy delty.
