@@ -610,10 +610,15 @@ class TransportApp:
 
         self.show_result(result)
 
-    # Renderuje wynik koncowy oraz kolejne iteracje w obszarze wynikow.
+    # Renderuje wynik koncowy oraz szczegolowy przebieg obliczen.
     def show_result(self, result):
         self.clear_results()
-        self.summary_text.set(f"Zysk calkowity: {result['total']:.2f} | Liczba iteracji: {len(result['iterations'])}")
+        improvements = sum(1 for step in result["delta_steps"] if step["theta"] is not None)
+        plan_iterations = 1 + improvements
+        self.summary_text.set(
+            f"Zysk calkowity: {result['total']:.2f} | "
+            f"Iteracje: {plan_iterations} | Poprawki delt: {improvements}"
+        )
         ttk.Label(
             self.result_frame,
             text="Opis komorek: a = przydzial, z = zysk jednostkowy, X = brak przydzialu lub zablokowana trasa.",
@@ -627,10 +632,15 @@ class TransportApp:
             ttk.Label(final_box, text="Zielony = przydzial zwiekszony po poprawce, pomaranczowy = przydzial zmniejszony po poprawce.").pack(anchor="w", pady=(0, 5))
         self.draw_table(final_box, result, result["allocation"], [0.0] * len(result["suppliers"]), [0.0] * len(result["receivers"]), show_duals=True, changes=changes)
         self.draw_economic_summary(result)
-        self.draw_delta_steps(result)
+        self.draw_intermediate_tables(result)
+        self.draw_plan_iterations(result)
 
+    # Wyswietla tabele posrednie powstajace podczas budowania planu poczatkowego.
+    def draw_intermediate_tables(self, result):
+        group = ttk.LabelFrame(self.result_frame, text="Tabele posrednie - metoda maksymalnego elementu", padding=8)
+        group.pack(fill="x", pady=5)
         for step in result["iterations"]:
-            box = ttk.LabelFrame(self.result_frame, text=f"Iteracja {step['number']}", padding=8)
+            box = ttk.LabelFrame(group, text=f"Tabela posrednia {step['number']}", padding=8)
             box.pack(fill="x", pady=5)
             ttk.Label(
                 box,
@@ -641,37 +651,43 @@ class TransportApp:
             ).pack(anchor="w", pady=(0, 5))
             self.draw_table(box, result, step["allocation"], step["supply"], step["demand"], (step["row"], step["col"]))
 
-    # Wyswietla tabele delt i informacje o ewentualnych poprawkach planu.
-    def draw_delta_steps(self, result):
-        box = ttk.LabelFrame(self.result_frame, text="Delty i ocena optymalnosci", padding=8)
-        box.pack(fill="x", pady=5)
-        ttk.Label(box, text="delta = z - alpha - beta. Dodatnia delta oznacza, ze plan mozna poprawic.").pack(anchor="w", pady=(0, 6))
+    # Wyswietla pelne iteracje planu: plan, delty i ewentualna poprawe.
+    def draw_plan_iterations(self, result):
+        group = ttk.LabelFrame(self.result_frame, text="Iteracje planu transportowego", padding=8)
+        group.pack(fill="x", pady=5)
+        ttk.Label(group, text="delta = z - alpha - beta. Dodatnia delta oznacza, ze plan mozna poprawic.").pack(anchor="w", pady=(0, 6))
 
+        current_allocation = result["iterations"][-1]["allocation"] if result["iterations"] else result["allocation"]
         for index, step in enumerate(result["delta_steps"], start=1):
-            frame = ttk.LabelFrame(box, text=f"Tabela delt {index}", padding=6)
+            frame = ttk.LabelFrame(group, text=f"Iteracja {index}", padding=6)
             frame.pack(fill="x", pady=5)
 
+            plan_box = ttk.LabelFrame(frame, text="Plan transportu", padding=6)
+            plan_box.pack(fill="x", pady=5)
+            self.draw_table(
+                plan_box,
+                result,
+                current_allocation,
+                [0.0] * len(result["suppliers"]),
+                [0.0] * len(result["receivers"]),
+                show_duals=True,
+            )
+
+            delta_box = ttk.LabelFrame(frame, text="Obliczone delty", padding=6)
+            delta_box.pack(fill="x", pady=5)
             if step["entering"] is None:
-                ttk.Label(frame, text="Wszystkie delty sa niedodatnie - plan jest optymalny.").pack(anchor="w", pady=(0, 5))
+                ttk.Label(delta_box, text="Wszystkie delty sa niedodatnie - plan jest optymalny.").pack(anchor="w", pady=(0, 5))
             else:
                 row, col = step["entering"]
                 text = f"Najwieksza dodatnia delta: {result['suppliers'][row]} -> {result['receivers'][col]}"
                 if step["theta"] is not None:
                     text += f", przesuniecie = {format_number(step['theta'])}"
-                ttk.Label(frame, text=text).pack(anchor="w", pady=(0, 5))
+                ttk.Label(delta_box, text=text).pack(anchor="w", pady=(0, 5))
 
-            self.draw_delta_table(frame, result, step["deltas"], step["entering"])
+            self.draw_delta_table(delta_box, result, step["deltas"], step["entering"])
 
             if step["allocation_after"] is not None:
-                allocation_box = ttk.LabelFrame(frame, text="Plan po poprawce", padding=6)
-                allocation_box.pack(fill="x", pady=5)
-                self.draw_table(
-                    allocation_box,
-                    result,
-                    step["allocation_after"],
-                    [0.0] * len(result["suppliers"]),
-                    [0.0] * len(result["receivers"]),
-                )
+                current_allocation = step["allocation_after"]
 
     # Rysuje pojedyncza tabele delt.
     def draw_delta_table(self, parent, result, deltas, selected=None):
