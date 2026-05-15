@@ -4,6 +4,7 @@ from tkinter import messagebox, ttk
 
 MAX_SIZE = 10
 EPS = 0.000001
+NEGATIVE_M = -1000000000000.0
 
 
 # Tworzy niezalezna kopie dwuwymiarowej listy.
@@ -13,11 +14,18 @@ def copy_matrix(matrix):
 
 # Formatuje liczby do czytelnego wyswietlania w tabelach.
 def format_number(value):
+    if is_negative_m(value):
+        return "-M"
     if abs(value) < EPS:
         value = 0.0
     if abs(value - round(value)) < EPS:
         return str(int(round(value)))
     return f"{value:.2f}"
+
+
+# Sprawdza, czy wartosc reprezentuje symboliczna kare -M.
+def is_negative_m(value):
+    return isinstance(value, (int, float)) and value <= NEGATIVE_M / 2
 
 
 # Zamienia tekst z pola formularza na liczbe i sprawdza poprawnosc danych.
@@ -35,10 +43,24 @@ def parse_number(text, field_name):
 
 
 # Wylicza zysk jednostkowy dla kazdej trasy dostawca-odbiorca.
-def calculate_unit_profits(transport_costs, purchase_costs, sale_prices, suppliers, receivers):
+def calculate_unit_profits(
+    transport_costs,
+    purchase_costs,
+    sale_prices,
+    suppliers,
+    receivers,
+    supplier_priorities=None,
+    receiver_priorities=None,
+):
+    supplier_priorities = ((supplier_priorities or []) + [False] * len(suppliers))[: len(suppliers)]
+    receiver_priorities = ((receiver_priorities or []) + [False] * len(receivers))[: len(receivers)]
     return [
         [
-            0.0 if supplier == "FD" or receiver == "FO" else sale_prices[j] - purchase_costs[i] - transport_costs[i][j]
+            NEGATIVE_M
+            if (supplier == "FD" and receiver_priorities[j]) or (receiver == "FO" and supplier_priorities[i])
+            else 0.0
+            if supplier == "FD" or receiver == "FO"
+            else sale_prices[j] - purchase_costs[i] - transport_costs[i][j]
             for j, receiver in enumerate(receivers)
         ]
         for i, supplier in enumerate(suppliers)
@@ -68,13 +90,16 @@ def calculate_economic_summary(allocation, transport_costs, purchase_costs, sale
     }
 
 
-# Ustala priorytet tras pomocniczych przy wyborze kolejnego przydzialu.
-def route_priority(supplier, receiver):
-    if supplier == "FD":
-        return 2 + (receiver == "FO")
-    if receiver == "FO":
+# Ustala priorytet kandydata: trasy rzeczywiste sa przed fikcyjnymi,
+# a zaznaczony dostawca lub odbiorca dostaje pierwszenstwo wsrod tras rzeczywistych.
+def route_priority(supplier, receiver, supplier_has_priority=False, receiver_has_priority=False):
+    if supplier == "FD" and receiver == "FO":
+        return 0
+    if supplier == "FD" or receiver == "FO":
         return 1
-    return 0
+    if supplier_has_priority or receiver_has_priority:
+        return 3
+    return 2
 
 
 # Bilansuje dane, dodajac fikcyjnego dostawce lub odbiorce gdy podaz i popyt sa rozne.
@@ -103,7 +128,7 @@ def balance_data(values, supply, demand, blocked, suppliers, receivers):
     return values, supply, demand, blocked, suppliers, receivers
 
 
-# Sprawdza metoda przeplywu, czy przy aktualnych blokadach da sie domknac plan.
+# Sprawdza metoda przeplywu, czy przy aktualnych ograniczeniach da sie domknac plan.
 def can_finish_plan(supply, demand, blocked):
     total_supply = sum(supply)
     total_demand = sum(demand)
@@ -195,7 +220,7 @@ def calculate_delta_table(values, allocation, blocked):
         for j, value in enumerate(row):
             if allocation[i][j] > EPS:
                 delta_row.append("X")
-            elif blocked[i][j] or alpha[i] is None or beta[j] is None:
+            elif blocked[i][j] or is_negative_m(value) or alpha[i] is None or beta[j] is None:
                 delta_row.append("-inf")
             else:
                 delta_row.append(format_number(value - alpha[i] - beta[j]))
@@ -286,17 +311,19 @@ def improve_plan_with_deltas(values, allocation, blocked):
 
 
 # Wyznacza plan startowy metoda maksymalnego elementu, a nastepnie go optymalizuje.
-def solve_max_element_method(values, supply, demand, blocked, suppliers, receivers):
+def solve_max_element_method(values, supply, demand, blocked, suppliers, receivers, supplier_priorities=None, receiver_priorities=None):
     values, supply, demand, blocked, suppliers, receivers = balance_data(
         values, supply, demand, blocked, suppliers, receivers
     )
     suppliers_count, receivers_count = len(supply), len(demand)
+    supplier_priorities = ((supplier_priorities or []) + [False] * suppliers_count)[:suppliers_count]
+    receiver_priorities = ((receiver_priorities or []) + [False] * receivers_count)[:receivers_count]
     allocation = [[0.0] * receivers_count for _ in range(suppliers_count)]
     iterations = []
 
     while sum(supply) > EPS or sum(demand) > EPS:
         if not can_finish_plan(supply, demand, blocked):
-            raise ValueError("Po ustawionych blokadach nie da sie zbudowac pelnego planu.")
+            raise ValueError("Po ustawionych ograniczeniach nie da sie zbudowac pelnego planu.")
 
         candidates = []
         for i in range(suppliers_count):
@@ -305,14 +332,20 @@ def solve_max_element_method(values, supply, demand, blocked, suppliers, receive
             for j in range(receivers_count):
                 if demand[j] > EPS and not blocked[i][j]:
                     candidates.append(
-                        (values[i][j], route_priority(suppliers[i], receivers[j]), min(supply[i], demand[j]), i, j)
+                        (
+                            route_priority(suppliers[i], receivers[j], supplier_priorities[i], receiver_priorities[j]),
+                            values[i][j],
+                            min(supply[i], demand[j]),
+                            i,
+                            j,
+                        )
                     )
 
         if not candidates:
             raise ValueError("Brak dostepnej trasy do dalszego przydzialu.")
 
         chosen = None
-        for value, _, amount, i, j in sorted(candidates, reverse=True):
+        for _, value, amount, i, j in sorted(candidates, reverse=True):
             test_supply = supply[:]
             test_demand = demand[:]
             test_supply[i] -= amount
@@ -322,7 +355,7 @@ def solve_max_element_method(values, supply, demand, blocked, suppliers, receive
                 break
 
         if chosen is None:
-            raise ValueError("Blokady nie pozwalaja domknac calego planu.")
+            raise ValueError("Ograniczenia nie pozwalaja domknac calego planu.")
 
         value, amount, i, j = chosen
         allocation[i][j] += amount
@@ -370,19 +403,17 @@ class TransportApp:
 
         self.supplier_count = tk.IntVar(value=2)
         self.receiver_count = tk.IntVar(value=3)
-        self.fake_cross_block_var = tk.BooleanVar(value=False)
         self.summary_text = tk.StringVar(value="Wprowadz dane i kliknij Oblicz.")
 
         self.supplier_names = []
         self.receiver_names = []
         self.value_vars = []
-        self.block_vars = []
+        self.supplier_priority_vars = []
+        self.receiver_priority_vars = []
         self.supply_vars = []
         self.demand_vars = []
         self.purchase_cost_vars = []
         self.sale_price_vars = []
-        self.fake_receiver_block_vars = []
-        self.fake_supplier_block_vars = []
 
         self.build_window()
         self.root.bind_all("<MouseWheel>", self.scroll_results)
@@ -442,8 +473,16 @@ class TransportApp:
     def add_label(self, text, row, col):
         ttk.Label(self.input_frame, text=text).grid(row=row, column=col, padx=4, pady=4)
 
-    # Dodaje komorke kosztu z polem wartosci i checkboxem blokady trasy.
-    def add_cell(self, row, col, variable=None, block_var=None, disabled=False):
+    # Dodaje etykiete nazwy z opcjonalnym checkboxem blokady.
+    def add_name_cell(self, text, row, col, priority_var=None):
+        cell = ttk.Frame(self.input_frame, padding=2)
+        cell.grid(row=row, column=col, padx=4, pady=4)
+        ttk.Label(cell, text=text).pack()
+        if priority_var is not None:
+            ttk.Checkbutton(cell, text="Blokada", variable=priority_var).pack()
+
+    # Dodaje komorke kosztu z polem wartosci.
+    def add_cell(self, row, col, variable=None, disabled=False):
         cell = ttk.Frame(self.input_frame, relief="solid", borderwidth=1, padding=4)
         cell.grid(row=row, column=col, padx=3, pady=3)
         entry = ttk.Entry(cell, width=8, justify="center", textvariable=variable)
@@ -451,7 +490,6 @@ class TransportApp:
             entry.insert(0, "0")
             entry.configure(state="disabled")
         entry.pack()
-        ttk.Checkbutton(cell, text="Blokada", variable=block_var).pack()
 
     # Tworzy lub odtwarza tabele danych wejsciowych dla podanej liczby dostawcow i odbiorcow.
     def build_input_table(self):
@@ -468,36 +506,33 @@ class TransportApp:
         text_vars = lambda size: [tk.StringVar(value="0") for _ in range(size)]
         bool_vars = lambda size: [tk.BooleanVar(value=False) for _ in range(size)]
         self.value_vars = [text_vars(cols) for _ in range(rows)]
-        self.block_vars = [bool_vars(cols) for _ in range(rows)]
+        self.supplier_priority_vars = bool_vars(rows)
+        self.receiver_priority_vars = bool_vars(cols)
         self.supply_vars, self.purchase_cost_vars = text_vars(rows), text_vars(rows)
         self.demand_vars, self.sale_price_vars = text_vars(cols), text_vars(cols)
-        self.fake_receiver_block_vars = bool_vars(rows)
-        self.fake_supplier_block_vars = bool_vars(cols)
-        self.fake_cross_block_var = tk.BooleanVar(value=False)
-
-        display_receivers = self.receiver_names + ["FO"]
         display_cols = cols + 1
         display_rows = rows + 1
 
         self.add_label("", 0, 0)
-        for j, name in enumerate(display_receivers):
-            self.add_label(name, 0, j + 1)
+        for j, name in enumerate(self.receiver_names):
+            self.add_name_cell(name, 0, j + 1, self.receiver_priority_vars[j])
+        self.add_name_cell("FO", 0, cols + 1)
         self.add_label("Podaz", 0, display_cols + 1)
         self.add_label("Koszty zakupu u dostawcy", 0, display_cols + 2)
 
         for i, name in enumerate(self.supplier_names):
-            self.add_label(name, i + 1, 0)
+            self.add_name_cell(name, i + 1, 0, self.supplier_priority_vars[i])
             for j in range(cols):
-                self.add_cell(i + 1, j + 1, self.value_vars[i][j], self.block_vars[i][j])
-            self.add_cell(i + 1, cols + 1, block_var=self.fake_receiver_block_vars[i], disabled=True)
+                self.add_cell(i + 1, j + 1, self.value_vars[i][j])
+            self.add_cell(i + 1, cols + 1, disabled=True)
             self.add_entry(self.input_frame, i + 1, display_cols + 1, self.supply_vars[i])
             self.add_entry(self.input_frame, i + 1, display_cols + 2, self.purchase_cost_vars[i], width=18)
 
         fake_row = rows + 1
         self.add_label("FD", fake_row, 0)
         for j in range(cols):
-            self.add_cell(fake_row, j + 1, block_var=self.fake_supplier_block_vars[j], disabled=True)
-        self.add_cell(fake_row, cols + 1, block_var=self.fake_cross_block_var, disabled=True)
+            self.add_cell(fake_row, j + 1, disabled=True)
+        self.add_cell(fake_row, cols + 1, disabled=True)
         self.add_entry(self.input_frame, fake_row, display_cols + 1, width=10, disabled=True)
         self.add_entry(self.input_frame, fake_row, display_cols + 2, width=18, disabled=True)
 
@@ -521,22 +556,24 @@ class TransportApp:
             [[8, 14, 17], [12, 9, 19]],
             [20, 30],
             [10, 28, 27],
-            [[False, True, False], [False, False, False]],
+            [False, False],
+            [False, True, False],
             [10, 12],
             [30, 25, 30],
         )
 
-    # Uzupelnia pola formularza przekazanymi kosztami, podaza, popytem i blokadami.
-    def fill_input_table(self, transport_costs, supply, demand, blocked, purchase_costs, sale_prices):
+    # Uzupelnia pola formularza przekazanymi kosztami, podaza, popytem i priorytetami.
+    def fill_input_table(self, transport_costs, supply, demand, supplier_priorities, receiver_priorities, purchase_costs, sale_prices):
         for i, amount in enumerate(supply):
             self.supply_vars[i].set(str(amount))
             self.purchase_cost_vars[i].set(str(purchase_costs[i]))
             for j, value in enumerate(demand):
                 self.value_vars[i][j].set(str(transport_costs[i][j]))
-                self.block_vars[i][j].set(blocked[i][j])
+            self.supplier_priority_vars[i].set(supplier_priorities[i])
         for j, amount in enumerate(demand):
             self.demand_vars[j].set(str(amount))
             self.sale_price_vars[j].set(str(sale_prices[j]))
+            self.receiver_priority_vars[j].set(receiver_priorities[j])
 
     # Odczytuje serie pol liczbowych i zwraca je jako liste wartosci float.
     def read_numbers(self, variables, names, text):
@@ -552,35 +589,82 @@ class TransportApp:
             ]
             for i in range(rows)
         ]
-        blocked = [[self.block_vars[i][j].get() for j in range(cols)] for i in range(rows)]
+        blocked = [[False for _ in range(cols)] for _ in range(rows)]
         supply = self.read_numbers(self.supply_vars, self.supplier_names, "podaz")
         demand = self.read_numbers(self.demand_vars, self.receiver_names, "popyt")
         purchase_costs = self.read_numbers(self.purchase_cost_vars, self.supplier_names, "koszt zakupu")
         sale_prices = self.read_numbers(self.sale_price_vars, self.receiver_names, "cena sprzedazy")
-        return transport_costs, supply, demand, blocked, purchase_costs, sale_prices, self.supplier_names[:], self.receiver_names[:]
+        supplier_priorities = [var.get() for var in self.supplier_priority_vars]
+        receiver_priorities = [var.get() for var in self.receiver_priority_vars]
+        return (
+            transport_costs,
+            supply,
+            demand,
+            blocked,
+            purchase_costs,
+            sale_prices,
+            self.supplier_names[:],
+            self.receiver_names[:],
+            supplier_priorities,
+            receiver_priorities,
+        )
 
-    # Bilansuje dane formularza z uwzglednieniem blokad dla fikcyjnych tras.
-    def balance_input_data(self, transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers):
+    # Bilansuje dane formularza, dodajac trasy fikcyjne bez nadawania im priorytetu.
+    def balance_input_data(
+        self,
+        transport_costs,
+        supply,
+        demand,
+        blocked,
+        purchase_costs,
+        sale_prices,
+        suppliers,
+        receivers,
+        supplier_priorities,
+        receiver_priorities,
+    ):
         supply_sum, demand_sum = sum(supply), sum(demand)
         if abs(supply_sum - demand_sum) < EPS:
-            return transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers
+            return (
+                transport_costs,
+                supply,
+                demand,
+                blocked,
+                purchase_costs,
+                sale_prices,
+                suppliers,
+                receivers,
+                supplier_priorities,
+                receiver_priorities,
+            )
 
-        fake_receiver_blocks = [var.get() for var in self.fake_receiver_block_vars[: len(suppliers)]]
-        fake_supplier_blocks = [var.get() for var in self.fake_supplier_block_vars[: len(receivers)]]
-
-        for i, row in enumerate(transport_costs):
+        for row in transport_costs:
             row.append(0.0)
-            blocked[i].append(fake_receiver_blocks[i])
+        for row in blocked:
+            row.append(False)
         demand.append(supply_sum)
         sale_prices.append(0.0)
         receivers.append("FO")
+        receiver_priorities.append(False)
 
         transport_costs.append([0.0] * len(demand))
-        blocked.append(fake_supplier_blocks + [self.fake_cross_block_var.get()])
+        blocked.append([False] * len(demand))
         supply.append(demand_sum)
         purchase_costs.append(0.0)
         suppliers.append("FD")
-        return transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers
+        supplier_priorities.append(False)
+        return (
+            transport_costs,
+            supply,
+            demand,
+            blocked,
+            purchase_costs,
+            sale_prices,
+            suppliers,
+            receivers,
+            supplier_priorities,
+            receiver_priorities,
+        )
 
     # Czysci poprzednie wyniki i przywraca komunikat poczatkowy.
     def clear_results(self):
@@ -592,12 +676,40 @@ class TransportApp:
     def calculate(self):
         try:
             data = self.read_input_data()
-            transport_costs, supply, demand, blocked, purchase_costs, sale_prices, suppliers, receivers = self.balance_input_data(*data)
+            (
+                transport_costs,
+                supply,
+                demand,
+                blocked,
+                purchase_costs,
+                sale_prices,
+                suppliers,
+                receivers,
+                supplier_priorities,
+                receiver_priorities,
+            ) = self.balance_input_data(*data)
             if len(suppliers) > MAX_SIZE or len(receivers) > MAX_SIZE:
                 raise ValueError("Po zbilansowaniu tabela przekroczylaby limit 10 x 10.")
 
-            values = calculate_unit_profits(transport_costs, purchase_costs, sale_prices, suppliers, receivers)
-            result = solve_max_element_method(values, supply, demand, blocked, suppliers, receivers)
+            values = calculate_unit_profits(
+                transport_costs,
+                purchase_costs,
+                sale_prices,
+                suppliers,
+                receivers,
+                supplier_priorities,
+                receiver_priorities,
+            )
+            result = solve_max_element_method(
+                values,
+                supply,
+                demand,
+                blocked,
+                suppliers,
+                receivers,
+                supplier_priorities,
+                receiver_priorities,
+            )
             result["economic_summary"] = calculate_economic_summary(
                 result["allocation"], transport_costs, purchase_costs, sale_prices, result["suppliers"], result["receivers"]
             )
@@ -621,7 +733,7 @@ class TransportApp:
         )
         ttk.Label(
             self.result_frame,
-            text="Opis komorek: a = przydzial, z = zysk jednostkowy, X = brak przydzialu lub zablokowana trasa.",
+            text="Opis komorek: a = przydzial, z = zysk jednostkowy, X = brak przydzialu.",
             font=("TkDefaultFont", 10, "bold"),
         ).pack(anchor="w", pady=(0, 6))
 
@@ -646,7 +758,7 @@ class TransportApp:
                 box,
                 text=(
                     f"Wybrano trase {result['suppliers'][step['row']]} -> {result['receivers'][step['col']]}, "
-                    f"zysk jednostkowy = {step['value']}, przydzial = {step['amount']}."
+                    f"zysk jednostkowy = {format_number(step['value'])}, przydzial = {format_number(step['amount'])}."
                 ),
             ).pack(anchor="w", pady=(0, 5))
             self.draw_table(box, result, step["allocation"], step["supply"], step["demand"], (step["row"], step["col"]))
@@ -707,6 +819,8 @@ class TransportApp:
                     color = "#bfe3b4"
                 elif value == "X":
                     color = "#d8d8d8"
+                elif value == "-inf":
+                    color = "#f3c7c7"
                 else:
                     try:
                         if float(value) > EPS:
@@ -773,6 +887,8 @@ class TransportApp:
                     color = "#bfe3b4"
                 elif changes.get((i, j)) == "down":
                     color = "#ffd49a"
+                elif is_negative_m(result["values"][i][j]) and allocation[i][j] <= EPS:
+                    color = "#f3c7c7"
                 elif result["blocked"][i][j] and allocation[i][j] <= EPS:
                     text = f"X\nz={format_number(result['values'][i][j])}"
                     color = "#f3c7c7"
